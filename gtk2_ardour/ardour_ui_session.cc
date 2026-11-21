@@ -946,8 +946,8 @@ ARDOUR_UI::rename_session (bool for_unnamed)
 	}
 
 	std::string parent = Glib::path_get_dirname (_session->path ());
-	const std::string name = recording_session_name (_session->path ());
-	if (!name.empty () && resolve_recording_session_link (parent, name) && parent == _session->path ()) {
+	const std::string recording_name = recording_session_name (_session->path ());
+	if (!recording_name.empty () && resolve_recording_session_link (parent, recording_name) && parent == _session->path ()) {
 		ArdourMessageDialog msg (_("Rename is unavailable for sessions with a recording-folder link. Use Save As to create a session with a new name."));
 		msg.run ();
 		return;
