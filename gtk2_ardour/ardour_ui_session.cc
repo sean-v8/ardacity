@@ -249,7 +249,7 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		return; /* back to main event loop */
 	}
 
-	if (session_dialog->use_session_template()) {
+	if (likely_new && session_dialog->use_session_template()) {
 		template_name = session_dialog->session_template_name();
 		_session_is_new = true;
 	}

@@ -483,7 +483,15 @@ SessionDialog::session_name (bool& should_be_new)
 	case 2: {
 		/* existing session chosen from file chooser */
 		should_be_new = false;
-		return existing_session_chooser.get_filename ();
+		const std::string filename = existing_session_chooser.get_filename ();
+		if (g_str_has_suffix (filename.c_str (), statefile_suffix)) {
+			std::string directory = Glib::path_get_dirname (filename);
+			const std::string snapshot = PBD::basename_nosuffix (filename);
+			if (resolve_recording_session_link (directory, snapshot)) {
+				return Glib::build_filename (directory, snapshot + statefile_suffix);
+			}
+		}
+		return filename;
 	} break;
 	case 3: {
 		string val = demo_name_entry.get_text ();
@@ -509,6 +517,9 @@ SessionDialog::validate_recording_folder (const std::string& folder, const std::
 		return true;
 	}
 
+	/* ArdourDialog hides on response, and showing it resets the tab. */
+	present ();
+	_tabs.set_current_page (New);
 	ArdourMessageDialog msg (*this, problem);
 	msg.run ();
 	return false;

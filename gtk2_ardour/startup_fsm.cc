@@ -826,7 +826,7 @@ StartupFSM::check_session_parameters (bool must_be_new)
 		return 1; /* keep running dialog */
 	}
 
-	if (session_dialog->use_session_template()) {
+	if (requested_new && session_dialog->use_session_template()) {
 		session_template = session_dialog->session_template_name();
 	}
 
