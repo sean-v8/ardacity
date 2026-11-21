@@ -77,6 +77,7 @@ class StartupFSM : public sigc::trackable
 	int                  session_existing_sample_rate;
 	XMLNode              session_engine_hints;
 	bool                 session_is_new;
+	bool                 session_in_recording_folder;
 	bool                 session_name_edited;
 	bool                 session_loaded;
 

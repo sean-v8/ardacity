@@ -69,6 +69,7 @@
 #include "ardour/source_factory.h"
 #include "ardour/session.h"
 #include "ardour/session_directory.h"
+#include "ardour/session_utils.h"
 #include "ardour/srcfilesource.h"
 #include "ardour/profile.h"
 
@@ -1560,10 +1561,7 @@ SoundFileOmega::reset_options ()
 		where_combo.set_sensitive (true);
 		sort_combo.set_sensitive (paths.size () > 1 && (ImportAsTrack == get_mode () || ImportAsTrigger == get_mode ()));
 
-		/* if we get through this function successfully, this may be
-		 * reset at the end, once we know if we can use hard links
-		 * to do embedding (or if we are importing a MIDI file).
-		 */
+		/* Reset at the end once we know whether references are allowed. */
 		file_reference_combo.set_sensitive (false);
 	}
 
@@ -1571,7 +1569,8 @@ SoundFileOmega::reset_options ()
 	bool src_needed;
 	bool must_copy;
 	bool selection_includes_multichannel;
-	bool selection_can_be_embedded_with_links = check_link_status (_session, paths);
+	/* External references in a recording-folder session are opened directly. */
+	const bool can_reference = !recording_session_name (_session->path ()).empty () || check_link_status (_session, paths);
 	ImportMode mode;
 
 	/* See if we are thinking about importing any MIDI files */
@@ -1734,10 +1733,10 @@ SoundFileOmega::reset_options ()
 	 * or any file if we are under nsm control */
 	must_copy |= _session->get_nsm_state() || have_a_midi_file || notebook.get_current_page() == 2;
 
-	if (must_copy || !selection_can_be_embedded_with_links) {
+	if (must_copy || !can_reference) {
 		file_reference_combo.set_active (0);
 	}
-	file_reference_combo.set_sensitive (!must_copy && selection_can_be_embedded_with_links);
+	file_reference_combo.set_sensitive (!must_copy && can_reference);
 
 	return true;
 }

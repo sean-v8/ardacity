@@ -217,6 +217,7 @@ class LIBARDOUR_API Session : public PBD::HistoryOwner,
 public:
 	/* a new session might have non-empty mix_template, an existing session should always have an empty one.
 	   the bus profile can be null if no master out bus is required.
+	   new_in_reserved_directory requires an empty directory already reserved by the caller.
 	*/
 
 	Session (AudioEngine&,
@@ -225,7 +226,8 @@ public:
 	         BusProfile const * bus_profile = 0,
 	         std::string mix_template = "",
 	         bool unnamed = false,
-	         samplecnt_t samplerate = 0);
+	         samplecnt_t samplerate = 0,
+	         bool new_in_reserved_directory = false);
 
 	virtual ~Session ();
 

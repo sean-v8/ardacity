@@ -73,6 +73,7 @@ StartupFSM::StartupFSM (EngineControl& amd)
 	, session_existing_sample_rate (0)
 	, session_engine_hints ("EngineHints")
 	, session_is_new (false)
+	, session_in_recording_folder (false)
 	, session_name_edited (false)
 	, session_loaded (false)
 	, new_user (NewUserWizard::required())
@@ -582,6 +583,7 @@ StartupFSM::get_session_parameters_from_path (string const & path_, string const
 		return false;
 	}
 
+	session_in_recording_folder = false;
 	string path (path_);
 
 	if (Glib::file_test (path.c_str(), Glib::FILE_TEST_EXISTS)) {
@@ -737,6 +739,17 @@ StartupFSM::check_session_parameters (bool must_be_new)
 	session_domain      = session_dialog->session_domain ();
 	session_name_edited = session_dialog->was_new_name_edited ();
 
+	session_in_recording_folder = session_dialog->use_recording_folder ();
+	if (session_in_recording_folder) {
+		if (!session_dialog->validate_recording_folder (session_path, session_name)) {
+			return 1;
+		}
+		session_is_new = true;
+		session_template = session_dialog->use_session_template () ? session_dialog->session_template_name () : "";
+		bus_profile.master_out_channels = session_dialog->master_channel_count ();
+		return 0;
+	}
+
 	if (must_be_new) {
 		assert (requested_new);
 	}
@@ -802,10 +815,9 @@ StartupFSM::check_session_parameters (bool must_be_new)
 	 * name of a statefile (snapshot).
 	 */
 
-	const string::size_type suffix_at = session_name.find (statefile_suffix);
-
-	if (suffix_at != string::npos) {
-		session_name = session_name.substr (0, suffix_at);
+	if ((requested_new || session_name.find (G_DIR_SEPARATOR) != string::npos) &&
+	    g_str_has_suffix (session_name.c_str (), statefile_suffix)) {
+		session_name.erase (session_name.size () - strlen (statefile_suffix));
 	}
 
 	/* this shouldn't happen, but we catch it just in case it does */

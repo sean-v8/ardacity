@@ -57,6 +57,7 @@
 #include "ardour/recent_sessions.h"
 #include "ardour/session.h"
 #include "ardour/session_state_utils.h"
+#include "ardour/session_utils.h"
 #include "ardour/template_utils.h"
 #include "ardour/filename_extensions.h"
 
@@ -494,12 +495,34 @@ SessionDialog::session_name (bool& should_be_new)
 	return "";
 }
 
+bool
+SessionDialog::use_recording_folder () const
+{
+	return _tabs.get_current_page () == 0 && _use_recording_folder.get_active ();
+}
+
+bool
+SessionDialog::validate_recording_folder (const std::string& folder, const std::string& name)
+{
+	const std::string problem = ARDOUR::recording_session_creation_error (folder, name);
+	if (problem.empty ()) {
+		return true;
+	}
+
+	ArdourMessageDialog msg (*this, problem);
+	msg.run ();
+	return false;
+}
+
 std::string
 SessionDialog::session_folder ()
 {
 	switch (_tabs.get_current_page()) {
 		case 0:
 			{
+				if (use_recording_folder ()) {
+					return new_folder_chooser.get_filename ();
+				}
 				std::string val = new_name_entry.get_text();
 				strip_whitespace_edges (val);
 				std::string legal_session_folder_name = legalize_for_path (val);
@@ -953,6 +976,10 @@ SessionDialog::setup_new_session_page ()
 	session_new_vbox.pack_start (*timebase_box, false, true);
 #endif
 	session_new_vbox.pack_start (*folder_box, false, true);
+#ifndef PLATFORM_WINDOWS
+	_use_recording_folder.set_label (_("Use selected folder as recording folder"));
+	session_new_vbox.pack_start (_use_recording_folder, false, true);
+#endif
 	session_new_vbox.pack_start (*name_hbox, false, true);
 	session_new_vbox.show_all ();
 }
@@ -1224,7 +1251,8 @@ SessionDialog::redisplay_recent_sessions ()
 			// if there's not a session file with the same name as the session directory,
 			// opening the parent item will fail, but expanding it will show the session
 			// files that actually exist, and the right one can then be opened.
-			row[recent_session_columns.visible_name] = Glib::path_get_basename (dirname);
+			const std::string recording_name = recording_session_name (dirname);
+			row[recent_session_columns.visible_name] = recording_name.empty () ? Glib::path_get_basename (dirname) : recording_name;
 			int64_t most_recent = 0;
 
 			// add the children

@@ -33,6 +33,7 @@
 
 #include "ardour/directory_names.h"
 #include "ardour/session_directory.h"
+#include "ardour/session_utils.h"
 #include "ardour/utils.h"
 
 #include "pbd/i18n.h"
@@ -115,7 +116,8 @@ SessionDirectory::sources_root () const
 		p = PBD::get_absolute_path (m_root_path);
 	}
 
-	const string legalized_root (legalize_for_path (Glib::path_get_basename(p)));
+	const string recording_name = recording_session_name (p);
+	const string legalized_root (legalize_for_path (recording_name.empty () ? Glib::path_get_basename (p) : recording_name));
 
 	std::string sources_root_path = Glib::build_filename (m_root_path, interchange_dir_name);
 

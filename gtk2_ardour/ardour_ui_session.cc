@@ -36,7 +36,17 @@
 #include "gtk2ardour-version.h"
 #endif
 
+#include <cerrno>
+#include <cstring>
+
+#ifndef PLATFORM_WINDOWS
+#include <unistd.h>
+#endif
+
 #include <glibmm/error.h>
+
+#include "pbd/gstdio_compat.h"
+#include "pbd/pathexpand.h"
 
 #include <ytkmm/progressbar.h>
 #include <ytkmm/stock.h>
@@ -127,7 +137,7 @@ ARDOUR_UI::build_session_from_dialog (SessionDialog& sd, const std::string& sess
 		bus_profile.master_out_channels = (uint32_t) sd.master_channel_count();
 	}
 
-	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain);
+	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain, !nsm && sd.use_recording_folder ());
 }
 
 /** This is only ever used once Ardour is already running with a session
@@ -185,6 +195,17 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		likely_new = true;
 	}
 
+	if (!nsm && session_dialog->use_recording_folder ()) {
+		if (!session_dialog->validate_recording_folder (session_path, session_name)) {
+			return;
+		}
+		template_name = session_dialog->use_session_template () ? session_dialog->session_template_name () : "";
+		session_dialog->hide ();
+		delete_when_idle (session_dialog);
+		build_session_from_dialog (*session_dialog, session_path, session_name, template_name, session_domain);
+		return;
+	}
+
 	/* could be an archived session, so test for that and use the
 	 * result if it was
 	 */
@@ -217,10 +238,9 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		}
 	}
 
-	string::size_type suffix = session_name.find (statefile_suffix);
-
-	if (suffix != string::npos) {
-		session_name = session_name.substr (0, suffix);
+	if ((likely_new || session_name.find (G_DIR_SEPARATOR) != string::npos) &&
+	    g_str_has_suffix (session_name.c_str (), statefile_suffix)) {
+		session_name.erase (session_name.size () - strlen (statefile_suffix));
 	}
 
 	/* this shouldn't happen, but we catch it just in case it does */
@@ -414,7 +434,9 @@ ARDOUR_UI::load_session_stage_two (const std::string& path, const std::string& s
 	BootMessage (string_compose (_("Please wait while %1 loads your session"), PROGRAM_NAME));
 
 	try {
-		new_session = new Session (*AudioEngine::instance(), path, snap_name, 0, mix_template);
+		std::string session_path = path;
+		resolve_recording_session_link (session_path, snap_name);
+		new_session = new Session (*AudioEngine::instance(), session_path, snap_name, 0, mix_template);
 	}
 
 	/* this one is special */
@@ -636,7 +658,7 @@ ARDOUR_UI::load_session_stage_two (const std::string& path, const std::string& s
 }
 
 int
-ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain)
+ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain, bool recording_folder)
 {
 	int x;
 
@@ -655,11 +677,11 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	 * asked for the SR (even if try-autostart-engine is set)
 	 */
 	if (from_startup_fsm && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder);
 	}
 	/* Sample-rate cannot be changed when JACK is running */
 	if (!ARDOUR::AudioEngine::instance()->setup_required () && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder);
 	}
 
 	/* Work-around missing "OK" button:
@@ -675,7 +697,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	audio_midi_setup->set_position (WIN_POS_CENTER);
 	audio_midi_setup->set_modal ();
 	audio_midi_setup->present ();
-	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain));
+	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain, recording_folder));
 
 	/* not done yet, but we're avoiding modal dialogs */
 	return 0;
@@ -683,7 +705,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 
 
 void
-ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain)
+ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, bool recording_folder)
 {
 	_engine_dialog_connection.disconnect ();
 
@@ -701,20 +723,49 @@ ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path
 	audio_midi_setup->set_modal (false);
 	audio_midi_setup->hide();
 
-	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain);
+	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain, 0, recording_folder);
 }
 
 int
-ARDOUR_UI::build_session_stage_two (std::string const& path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate)
+ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder)
 {
 	PBD::Unwinder uw (_loading_session, true);
+
+	std::string path = chosen_path;
+#ifndef PLATFORM_WINDOWS
+	std::string visible_link;
+	std::string relative_target;
+	if (recording_folder) {
+		const std::string problem = recording_session_creation_error (chosen_path, snap_name);
+		if (!problem.empty ()) {
+			ArdourMessageDialog msg (problem);
+			msg.run ();
+			return -1;
+		}
+
+		const std::string folder = canonical_path (chosen_path);
+		const std::string hidden = recording_session_directory_name (snap_name);
+		const std::string statefile = snap_name + statefile_suffix;
+		path = Glib::build_filename (folder, hidden);
+		visible_link = Glib::build_filename (folder, statefile);
+		relative_target = Glib::build_filename (hidden, statefile);
+
+		/* Reserve this directory exclusively before initializing the session. */
+		if (g_mkdir (path.c_str (), 0755) != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not create session folder \"%1\": %2"), path, g_strerror (errno)));
+			msg.run ();
+			return -1;
+		}
+		unnamed = false;
+	}
+#endif
 
 	Session* new_session;
 
 	bool meta_session = !session_template.empty() && session_template.substr (0, 11) == "urn:ardour:";
 
 	try {
-		new_session = new Session (*AudioEngine::instance(), path, snap_name, bus_profile.master_out_channels > 0 ? &bus_profile : NULL, meta_session ? "" : session_template, unnamed, samplerate);
+		new_session = new Session (*AudioEngine::instance(), path, snap_name, bus_profile.master_out_channels > 0 ? &bus_profile : NULL, meta_session ? "" : session_template, unnamed, samplerate, recording_folder);
 	}
 	catch (SessionException const& e) {
 		stringstream ss;
@@ -795,7 +846,21 @@ ARDOUR_UI::build_session_stage_two (std::string const& path, std::string const& 
 
 	set_session (new_session);
 
-	new_session->save_state(new_session->name());
+	const int saved = new_session->save_state (recording_folder ? snap_name : new_session->name ());
+
+#ifndef PLATFORM_WINDOWS
+	if (recording_folder) {
+		if (saved != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not save session in \"%1\". The visible session link was not created."), path));
+			msg.run ();
+		} else if (symlink (relative_target.c_str (), visible_link.c_str ()) != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not create session link \"%1\": %2. The session was saved in \"%3\"."), visible_link, g_strerror (errno), path));
+			msg.run ();
+		}
+	}
+#else
+	(void) saved;
+#endif
 
 	if (meta_session) {
 		meta_session_setup (session_template.substr (11));
@@ -877,6 +942,14 @@ void
 ARDOUR_UI::rename_session (bool for_unnamed)
 {
 	if (!_session) {
+		return;
+	}
+
+	std::string parent = Glib::path_get_dirname (_session->path ());
+	const std::string name = recording_session_name (_session->path ());
+	if (!name.empty () && resolve_recording_session_link (parent, name) && parent == _session->path ()) {
+		ArdourMessageDialog msg (_("Rename is unavailable for sessions with a recording-folder link. Use Save As to create a session with a new name."));
+		msg.run ();
 		return;
 	}
 

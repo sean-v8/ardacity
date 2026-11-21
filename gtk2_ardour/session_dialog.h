@@ -77,6 +77,8 @@ public:
 
 	std::string session_name (bool& should_be_new);
 	std::string session_folder ();
+	bool use_recording_folder () const;
+	bool validate_recording_folder (const std::string& folder, const std::string& name);
 
 	Temporal::TimeDomain session_domain () const;
 
@@ -196,6 +198,7 @@ private:
 	void setup_untitled_session ();
 
 	Gtk::FileChooserButton new_folder_chooser;
+	Gtk::CheckButton _use_recording_folder;
 
 	struct SessionTemplateColumns : public Gtk::TreeModel::ColumnRecord {
 		SessionTemplateColumns () {

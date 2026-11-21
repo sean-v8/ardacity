@@ -199,7 +199,8 @@ Session::Session (AudioEngine &eng,
                   BusProfile const * bus_profile,
                   string mix_template,
                   bool unnamed,
-                  samplecnt_t sr)
+                  samplecnt_t sr,
+                  bool new_in_reserved_directory)
 	: HistoryOwner (X_("editor"))
 	, ScaleProvider (nullptr)
 	,  _playlists (new SessionPlaylists)
@@ -400,6 +401,9 @@ Session::Session (AudioEngine &eng,
 	Temporal::reset();
 
 	pre_engine_init (fullpath); // sets _is_new
+	if (new_in_reserved_directory) {
+		_is_new = true;
+	}
 
 	setup_lua ();
 
