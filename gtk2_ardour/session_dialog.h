@@ -233,6 +233,8 @@ private:
 	std::string load_template_override;
 
 	void new_name_changed ();
+	void suggest_recording_folder_name ();
+	std::string _suggested_session_name;
 	void new_name_activated ();
 	void populate_session_templates ();
 

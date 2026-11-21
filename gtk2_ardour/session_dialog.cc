@@ -752,7 +752,36 @@ void
 SessionDialog::setup_untitled_session ()
 {
 	new_name_entry.set_text (string_compose (_("Untitled-%1"), Glib::DateTime::create_now_local().format ("%F-%H-%M-%S")));
+	_suggested_session_name = new_name_entry.get_text ();
 	new_name_was_edited = false;
+}
+
+void
+SessionDialog::suggest_recording_folder_name ()
+{
+	const std::string current_name = new_name_entry.get_text ();
+	if (!current_name.empty () && current_name != _suggested_session_name) {
+		return;
+	}
+
+	if (!_use_recording_folder.get_active ()) {
+		setup_untitled_session ();
+		return;
+	}
+
+	const std::string folder = new_folder_chooser.get_filename ();
+	if (folder.empty ()) {
+		return;
+	}
+
+	std::string name = Glib::path_get_basename (folder);
+	strip_whitespace_edges (name);
+	if (name.empty () || name.front () == '.' || !Session::session_name_is_legal (name).empty ()) {
+		return;
+	}
+
+	_suggested_session_name = name;
+	new_name_entry.set_text (name);
 }
 
 void
@@ -978,6 +1007,10 @@ SessionDialog::setup_new_session_page ()
 	session_new_vbox.pack_start (*folder_box, false, true);
 #ifndef PLATFORM_WINDOWS
 	_use_recording_folder.set_label (_("Use selected folder as recording folder"));
+	_use_recording_folder.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
+	new_folder_chooser.signal_file_set ().connect (
+		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
 	session_new_vbox.pack_start (_use_recording_folder, false, true);
 #endif
 	session_new_vbox.pack_start (*name_hbox, false, true);
