@@ -1017,7 +1017,7 @@ SessionDialog::setup_new_session_page ()
 #endif
 	session_new_vbox.pack_start (*folder_box, false, true);
 #ifndef PLATFORM_WINDOWS
-	_use_recording_folder.set_label (_("Use selected folder as recording folder"));
+	_use_recording_folder.set_label (_("Create session in an existing folder"));
 	_use_recording_folder.signal_toggled ().connect (
 		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
 	new_folder_chooser.signal_file_set ().connect (
