@@ -27,6 +27,7 @@ class ArdourSessionMenu(GObject.GObject, Caja.MenuProvider):
         item = Caja.MenuItem(
             name="ArdourSessionMenu::create",
             label="Create Ardour Session Here",
+            icon="/usr/share/pixmaps/ardour.svg",
             tip="Open the Ardour New Session dialog for this folder",
         )
         item.connect("activate", self._activate, window, path)

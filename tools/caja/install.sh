@@ -51,7 +51,11 @@ if destination.is_symlink() or (destination.exists() and not destination.is_file
 if destination.exists():
     try:
         current = destination.read_text(encoding="utf-8")
-        recognized = extension_signature(current) == extension_signature(source)
+        previous_source = source.replace('            icon="/usr/share/pixmaps/ardour.svg",\n', "", 1)
+        recognized = extension_signature(current) in (
+            extension_signature(source),
+            extension_signature(previous_source),
+        )
     except (SyntaxError, UnicodeError):
         recognized = False
 
