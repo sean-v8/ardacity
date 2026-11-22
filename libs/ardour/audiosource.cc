@@ -448,9 +448,6 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 
 	double scale;
 	double expected_peaks;
-	PeakData::PeakDatum xmax;
-	PeakData::PeakDatum xmin;
-	int32_t to_read;
 #ifdef PLATFORM_WINDOWS
 	SYSTEM_INFO system_info;
         GetSystemInfo (&system_info);
@@ -618,160 +615,57 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 	}
 
 	if (scale < 1.0) {
-
 		DEBUG_TRACE (DEBUG::Peaks, "DOWNSAMPLE\n");
 
-		/* the caller wants:
-		 *
-		 * - more samples-per-peak (lower resolution) than the peakfile, or to put it another way,
-		 * - less peaks than the peakfile holds for the same range
-		 *
-		 * So, read a block into a staging area, and then downsample from there.
-		 *
-		 * to avoid confusion, I'll refer to the requested peaks as visual_peaks and the peakfile peaks as stored_peaks
+		/* Assign stored peaks to columns relative to this image, including
+		 * the first and last partial blocks. Each stored block is read once.
 		 */
-
-		/* compute the rounded up sample position  */
-
-		samplepos_t next_visual_peak        = (samplepos_t) ceil (start / samples_per_visual_peak);
-		double      next_visual_peak_sample = next_visual_peak * samples_per_visual_peak;
-		samplepos_t current_stored_peak     = (samplepos_t) ceil (next_visual_peak_sample / (double) samples_per_file_peak);
-
-		samplepos_t stored_peak_before_next_visual_peak = (samplepos_t) next_visual_peak_sample / samples_per_file_peak;
-		samplecnt_t nvisual_peaks = 0;
-		uint32_t i = 0;
-
-		/* open ... close during out: handling */
-
-		off_t  map_off      =  (uint32_t) (current_stored_peak) * sizeof(PeakData);
-		off_t  read_map_off = map_off & ~(bufsize - 1);
-		off_t  map_delta    = map_off - read_map_off;
-
-		samplecnt_t max_chunk = (statbuf.st_size - read_map_off - map_delta) / sizeof(PeakData);
-
-		if (map_off > statbuf.st_size) {
-			/* next_visual_peak is after peak-file end */
-			assert (npeaks == 1);
-			/* only process (next_visual_peak_sample - start), do not use peak-file */
-			max_chunk = 0;
-			map_delta = 0;
-			read_map_off = 0;
+		std::fill_n (peaks, npeaks, PeakData {});
+		if (cnt == 0) {
+			return 0;
 		}
-		samplecnt_t chunksize = std::min<samplecnt_t> (expected_peaks, max_chunk);
 
-		size_t raw_map_length = chunksize * sizeof(PeakData);
-		size_t map_length     = raw_map_length + map_delta;
+		const samplepos_t first = start / samples_per_file_peak;
+		const samplepos_t available = statbuf.st_size / sizeof (PeakData);
+		const samplepos_t last = std::min (available, (start + cnt - 1) / samples_per_file_peak + 1);
+		const off_t byte = first * sizeof (PeakData);
+		if (first >= last || lseek (sfd, byte, SEEK_SET) != byte) {
+			return -1;
+		}
 
-		assert (read_map_off + (off_t)map_length <= statbuf.st_size);
-		assert (read_map_off + map_delta + (off_t)raw_map_length <= statbuf.st_size);
-
-		if (_first_run || (_last_scale != samples_per_visual_peak) || (_last_map_off != map_off) || (_last_raw_map_length < raw_map_length)) {
-
-			/* offset between requested start, and first peak-file peak */
-			samplecnt_t start_offset = next_visual_peak_sample - start;
-
-			peak_cache.reset (new PeakData[npeaks]);
-			if (chunksize > 0) {
-				std::unique_ptr<PeakData[]> staging (new PeakData[chunksize]);
-
-				char* addr;
-#ifdef PLATFORM_WINDOWS
-				HANDLE file_handle = (HANDLE) _get_osfhandle(int(sfd));
-				HANDLE map_handle;
-				LPVOID view_handle;
-				bool err_flag;
-
-				map_handle = CreateFileMapping(file_handle, NULL, PAGE_READONLY, 0, 0, NULL);
-				if (map_handle == NULL) {
-					error << string_compose (_("map failed - could not create file mapping for peakfile %1."), _peakpath) << endmsg;
-					return -1;
-				}
-
-				view_handle = MapViewOfFile(map_handle, FILE_MAP_READ, 0, read_map_off, map_length);
-				if (view_handle == NULL) {
-					error << string_compose (_("map failed - could not map peakfile %1."), _peakpath) << endmsg;
-					return -1;
-				}
-
-				addr = (char *) view_handle;
-
-				memcpy ((void*)staging.get(), (void*)(addr + map_delta), raw_map_length);
-
-				err_flag = UnmapViewOfFile (view_handle);
-				err_flag = CloseHandle(map_handle);
-				if(!err_flag) {
-					error << string_compose (_("unmap failed - could not unmap peakfile %1."), _peakpath) << endmsg;
-					return -1;
-				}
-#else
-				addr = (char*) mmap (0, map_length, PROT_READ, MAP_PRIVATE, sfd, read_map_off);
-				if (addr ==  MAP_FAILED) {
-					error << string_compose (_("map failed - could not mmap peakfile %1."), _peakpath) << endmsg;
-					return -1;
-				}
-
-				memcpy ((void*)staging.get(), (void*)(addr + map_delta), raw_map_length);
-				munmap (addr, map_length);
-#endif
-				while (nvisual_peaks < read_npeaks) {
-
-					xmax = -1.0;
-					xmin = 1.0;
-					double energy = 0;
-					samplecnt_t weight = 0;
-
-					while ((current_stored_peak <= stored_peak_before_next_visual_peak) && (i < chunksize)) {
-
-						xmax = max (xmax, staging[i].max);
-						xmin = min (xmin, staging[i].min);
-						const samplecnt_t block = std::max<samplecnt_t> (0, std::min (
-							samples_per_file_peak, _length.samples() - current_stored_peak * samples_per_file_peak));
-						energy += double (staging[i].rms) * staging[i].rms * block;
-						weight += block;
-						++i;
-						++current_stored_peak;
+		std::vector<double> energy (npeaks, 0.0);
+		std::vector<samplecnt_t> weight (npeaks, 0);
+		PeakData blocks[4096];
+		for (samplepos_t block = first; block < last;) {
+			const samplecnt_t count = std::min<samplecnt_t> (4096, last - block);
+			const size_t bytes = count * sizeof (PeakData);
+			if (::read (sfd, blocks, bytes) != static_cast<ssize_t> (bytes)) {
+				return -1;
+			}
+			for (samplecnt_t i = 0; i < count; ++i, ++block) {
+				const samplepos_t block_start = block * samples_per_file_peak;
+				const samplepos_t lo = std::max (start, block_start);
+				const samplepos_t hi = std::min (start + cnt, block_start + samples_per_file_peak);
+				const samplecnt_t first_column = std::min<samplecnt_t> (npeaks - 1, (lo - start) / samples_per_visual_peak);
+				const samplecnt_t last_column = std::min<samplecnt_t> (npeaks - 1, (hi - 1 - start) / samples_per_visual_peak);
+				for (samplecnt_t column = first_column; column <= last_column; ++column) {
+					const samplepos_t left = start + std::ceil (column * samples_per_visual_peak);
+					const samplepos_t right = start + std::ceil ((column + 1) * samples_per_visual_peak);
+					const samplecnt_t overlap = std::min (hi, right) - std::max (lo, left);
+					if (overlap <= 0) {
+						continue;
 					}
-
-					peak_cache[nvisual_peaks].max = xmax;
-					peak_cache[nvisual_peaks].min = xmin;
-					peak_cache[nvisual_peaks].rms = weight ? std::sqrt (energy / weight) : 0;
-					++nvisual_peaks;
-					next_visual_peak_sample = min ((double) start + cnt, (next_visual_peak_sample + samples_per_visual_peak));
-					stored_peak_before_next_visual_peak = (uint32_t) next_visual_peak_sample / samples_per_file_peak;
+					PeakData& peak = peaks[column];
+					peak.min = weight[column] ? std::min (peak.min, blocks[i].min) : blocks[i].min;
+					peak.max = weight[column] ? std::max (peak.max, blocks[i].max) : blocks[i].max;
+					energy[column] += double (blocks[i].rms) * blocks[i].rms * overlap;
+					weight[column] += overlap;
 				}
 			}
-
-			/* add data between start and sample corresponding to map_off */
-			if (start_offset > 0) {
-				std::unique_ptr<Sample[]> buf (new Sample[start_offset]);
-				samplecnt_t samples_read = read_unlocked (buf.get(), start, start_offset);
-				find_peaks (buf.get(), samples_read, &peak_cache[0].min, &peak_cache[0].max);
-			}
-
-			/* fix end, add data not covered by Peak File */
-			samplecnt_t last_sample_from_peakfile = current_stored_peak * samples_per_file_peak;
-			if (last_sample_from_peakfile < start + cnt && nvisual_peaks > 0) {
-				samplecnt_t to_read = start + cnt - last_sample_from_peakfile;
-				std::unique_ptr<Sample[]> buf (new Sample[to_read]);
-				samplecnt_t samples_read = read_unlocked (buf.get(), last_sample_from_peakfile, to_read);
-				find_peaks (buf.get(), samples_read, &peak_cache[nvisual_peaks - 1].min, &peak_cache[nvisual_peaks - 1].max);
-			}
-
-			if (zero_fill) {
-				assert (read_npeaks < npeaks);
-#ifndef NDEBUG
-				cerr << "Zero fill '" << _name << "' end of peaks (@ " << read_npeaks << " with " << zero_fill << ")" << endl;
-#endif
-				memset (&peak_cache[read_npeaks], 0, sizeof (PeakData) * zero_fill);
-			}
-
-			_first_run = false;
-			_last_scale = samples_per_visual_peak;
-			_last_map_off = map_off;
-			_last_raw_map_length = raw_map_length;
 		}
-
-		memcpy ((void*)peaks, (void*)peak_cache.get(), npeaks * sizeof(PeakData));
+		for (samplecnt_t i = 0; i < npeaks; ++i) {
+			peaks[i].rms = weight[i] ? std::sqrt (energy[i] / weight[i]) : 0;
+		}
 
 	} else {
 		DEBUG_TRACE (DEBUG::Peaks, "UPSAMPLE\n");
