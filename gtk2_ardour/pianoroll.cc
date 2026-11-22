@@ -995,16 +995,11 @@ Pianoroll::snap_to_internal (timepos_t& start, Temporal::RoundMode direction, Sn
 }
 
 void
-Pianoroll::set_samples_per_pixel (samplecnt_t spp)
+Pianoroll::set_samples_per_pixel (double spp)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
 	assert (spp > 0);
-#ifndef NDEBUG
-	if (spp < 1) {
-		spp = 1;
-	}
-#endif
 
 	CueEditor::set_samples_per_pixel (spp);
 

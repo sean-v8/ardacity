@@ -32,6 +32,8 @@
 
 #pragma once
 
+#include <cmath>
+
 #include "pbd/signals.h"
 
 #include "temporal/timeline.h"
@@ -181,7 +183,8 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 
 	virtual void set_selected_midi_region_view (MidiRegionView&);
 
-	samplecnt_t get_current_zoom () const { return samples_per_pixel; }
+	static constexpr double minimum_samples_per_pixel = 1.0 / 32.0;
+	double get_current_zoom () const { return samples_per_pixel; }
 
 	void temporal_zoom_step (bool zoom_out);
 	void temporal_zoom_step_scale (bool zoom_out, double scale);
@@ -189,7 +192,7 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 	void temporal_zoom_step_mouse_focus_scale (bool zoom_out, double scale);
 
 	void calc_extra_zoom_edges(samplepos_t &start, samplepos_t &end);
-	void temporal_zoom (samplecnt_t samples_per_pixel);
+	void temporal_zoom (double samples_per_pixel);
 	void temporal_zoom_by_sample (samplepos_t start, samplepos_t end);
 	void temporal_zoom_to_sample (bool coarser, samplepos_t sample);
 
@@ -211,7 +214,8 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 		*/
 
 		if (pixel >= _timeline_origin) {
-			return (pixel - _timeline_origin) * samples_per_pixel;
+			const double sample = (pixel - _timeline_origin) * samples_per_pixel;
+			return samples_per_pixel < 1.0 ? std::llround (sample) : static_cast<samplepos_t> (sample);
 		} else {
 			return 0;
 		}
@@ -223,7 +227,8 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 	 */
 
 	samplepos_t pixel_to_sample (double pixel) const {
-		return pixel * samples_per_pixel;
+		const double sample = pixel * samples_per_pixel;
+		return samples_per_pixel < 1.0 ? std::llround (sample) : static_cast<samplepos_t> (sample);
 	}
 
 	double sample_to_pixel (samplepos_t sample) const {
@@ -328,9 +333,9 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 
 	void reset_x_origin (samplepos_t);
 	void reset_y_origin (double);
-	void reset_zoom (samplecnt_t);
+	void reset_zoom (double);
 	virtual double max_extents_scale() const { return 1.0; }
-	virtual void set_samples_per_pixel (samplecnt_t) = 0;
+	virtual void set_samples_per_pixel (double) = 0;
 
 	virtual void cycle_zoom_focus ();
 	virtual void set_zoom_focus (Editing::ZoomFocus) = 0;
@@ -669,7 +674,7 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 
 	std::unique_ptr<VerboseCursor> _verbose_cursor;
 
-	samplecnt_t        samples_per_pixel;
+	double             samples_per_pixel;
 
 	virtual Editing::ZoomFocus effective_zoom_focus() const { return zoom_focus(); }
 
@@ -785,7 +790,7 @@ class EditingContext : public ARDOUR::SessionHandlePtr, public AxisViewProvider,
 
 		Type        pending;
 		samplepos_t time_origin;
-		samplecnt_t samples_per_pixel;
+		double samples_per_pixel;
 		double      y_origin;
 
 		int idle_handler_id;

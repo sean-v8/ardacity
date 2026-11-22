@@ -16,6 +16,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <algorithm>
+
 #include "canvas/arrow.h"
 #include "canvas/tracking_text.h"
 
@@ -81,7 +83,7 @@ RegionPeakCursor::hide ()
 }
 
 void
-RegionPeakCursor::set (AudioRegionView* arv, samplepos_t when, samplecnt_t samples_per_pixel)
+RegionPeakCursor::set (AudioRegionView* arv, samplepos_t when, double samples_per_pixel)
 {
 	std::shared_ptr<ARDOUR::AudioRegion> ar = std::dynamic_pointer_cast<ARDOUR::AudioRegion> (arv->region ());
 	assert (ar);
@@ -103,9 +105,12 @@ RegionPeakCursor::set (AudioRegionView* arv, samplepos_t when, samplecnt_t sampl
 	p.min = 0;
 	p.max = 0;
 
+	const double peak_width = std::max (1.0, samples_per_pixel);
 	for (uint32_t chn = 0; chn < ar->n_channels (); ++chn) {
 		PeakData pc;
-		ar->read_peaks (&pc, 1, s, samples_per_pixel, chn, samples_per_pixel);
+		if (!ar->read_peaks (&pc, 1, s, static_cast<samplecnt_t> (peak_width), chn, peak_width)) {
+			continue;
+		}
 		if (chn == 0) {
 			p.min = pc.min;
 			p.max = pc.max;

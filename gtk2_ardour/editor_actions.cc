@@ -348,8 +348,10 @@ Editor::register_actions ()
 	reg_sens (editor_actions, "scroll-playhead-forward", _("Playhead Forward"), sigc::bind (sigc::mem_fun(*this, &Editor::scroll_playhead), true));;
 	reg_sens (editor_actions, "scroll-playhead-backward", _("Playhead Backward"), sigc::bind (sigc::mem_fun(*this, &Editor::scroll_playhead), false));
 
-	reg_sens (editor_actions, "playhead-one-sample-backward", _("Move Playhead Backward One Sample"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), false));
-	reg_sens (editor_actions, "playhead-one-sample-forward", _("Move Playhead Forward One Sample"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), true));
+	reg_sens (editor_actions, "playhead-one-sample-backward", _("Move Playhead Backward One Sample"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), false, false));
+	reg_sens (editor_actions, "playhead-one-sample-forward", _("Move Playhead Forward One Sample"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), true, false));
+	reg_sens (editor_actions, "playhead-zoom-step-backward", _("Move Playhead Backward by Zoom Step"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), false, true));
+	reg_sens (editor_actions, "playhead-zoom-step-forward", _("Move Playhead Forward by Zoom Step"), sigc::bind (sigc::mem_fun (*this, &Editor::step_playhead_sample), true, true));
 	reg_sens (editor_actions, "add-named-location-from-playhead", _("Add Named Location Marker at Playhead"), sigc::mem_fun (*this, &Editor::add_named_location_from_playhead));
 	reg_sens (editor_actions, "rename-selected-location-mark", _("Rename Selected Location Marker"), sigc::mem_fun (*this, &Editor::rename_selected_location_mark));
 	reg_sens (editor_actions, "move-selected-location-mark-to-playhead", _("Move Selected Location Marker to Playhead"), sigc::mem_fun (*this, &Editor::move_selected_location_mark_to_playhead));

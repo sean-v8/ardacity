@@ -112,7 +112,7 @@ public:
 	bool canvas_bg_event (GdkEvent* event, ArdourCanvas::Item*) { return true; }
 
 	samplecnt_t current_page_samples() const;
-	void set_samples_per_pixel (samplecnt_t);
+	void set_samples_per_pixel (double);
 
 	Gdk::Cursor* which_track_cursor () const { return nullptr; }
 	Gdk::Cursor* which_mode_cursor () const { return nullptr; }

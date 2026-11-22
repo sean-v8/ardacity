@@ -540,7 +540,7 @@ private:
 		VisualState (bool with_tracks);
 		~VisualState ();
 		double              y_position;
-		samplecnt_t         samples_per_pixel;
+		double              samples_per_pixel;
 		samplepos_t        _leftmost_sample;
 		Editing::ZoomFocus  zoom_focus;
 		GUIObjectState*     gui_state;
@@ -559,7 +559,7 @@ private:
 	void start_visual_state_op (uint32_t n);
 	void cancel_visual_state_op (uint32_t n);
 
-	void set_samples_per_pixel (samplecnt_t);
+	void set_samples_per_pixel (double);
 	void on_samples_per_pixel_changed ();
 
 	Editing::MouseMode effective_mouse_mode () const;
@@ -1371,7 +1371,7 @@ private:
 	void unhide_markers ();
 	void unhide_ranges ();
 	void cursor_align (bool playhead_to_edit);
-	void step_playhead_sample (bool forward);
+	void step_playhead_sample (bool forward, bool zoom_relative);
 	ARDOUR::Location* selected_location_mark ();
 	void rename_selected_location_mark ();
 	void move_selected_location_mark_to_playhead ();

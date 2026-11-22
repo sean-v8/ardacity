@@ -3911,9 +3911,9 @@ Editor::use_visual_state (VisualState& vs)
  *  @param spp new number of samples per pixel
  */
 void
-Editor::set_samples_per_pixel (samplecnt_t spp)
+Editor::set_samples_per_pixel (double spp)
 {
-	if (spp < 1) {
+	if (!std::isfinite (spp) || spp < minimum_samples_per_pixel) {
 		return;
 	}
 

@@ -623,7 +623,7 @@ class MidiView : public virtual sigc::trackable, public LineMerger
 	virtual void leave_internal ();
 	void hide_verbose_cursor ();
 
-	samplecnt_t _last_display_zoom;
+	double _last_display_zoom;
 
 	double    _last_event_x;
 	double    _last_event_y;

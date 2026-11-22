@@ -1493,18 +1493,18 @@ Editor::scroll_playhead (bool forward)
 }
 
 void
-Editor::step_playhead_sample (bool forward)
+Editor::step_playhead_sample (bool forward, bool zoom_relative)
 {
 	if (!_session || _session->transport_rolling () || _session->actively_recording ()) {
 		return;
 	}
 
 	const samplepos_t pos = _session->transport_sample ();
-	if ((forward && pos == max_samplepos) || (!forward && pos <= 0)) {
-		return;
+	const samplecnt_t step = zoom_relative ? std::max<samplecnt_t> (1, llround (samples_per_pixel)) : 1;
+	const samplepos_t target = forward ? pos + std::min (step, max_samplepos - pos) : std::max<samplepos_t> (0, pos - step);
+	if (target != pos) {
+		_session->request_locate (target, false, MustStop);
 	}
-
-	_session->request_locate (forward ? pos + 1 : pos - 1, false, MustStop);
 }
 
 void

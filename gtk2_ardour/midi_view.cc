@@ -1464,7 +1464,7 @@ MidiView::model_changed()
 
 	if (_unfinished_live_notes) {
 		// Currently recording
-		const samplecnt_t zoom = _editing_context.get_current_zoom();
+		const double zoom = _editing_context.get_current_zoom();
 		if (zoom != _last_display_zoom) {
 			/* Update resolved canvas notes to reflect changes in zoom without
 			   touching model.  Leave active notes (with length max) alone since
@@ -1634,7 +1634,7 @@ MidiView::view_changed()
 
 		EC_LOCAL_TEMPO_SCOPE_ARG (_editing_context);
 
-		const samplecnt_t zoom = _editing_context.get_current_zoom();
+		const double zoom = _editing_context.get_current_zoom();
 		if (zoom != _last_display_zoom) {
 			for (auto & [ note, gui ] : _events) {
 				if (note->end_time() != std::numeric_limits<Temporal::Beats>::max()) {

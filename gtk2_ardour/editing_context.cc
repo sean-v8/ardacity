@@ -2727,8 +2727,7 @@ EditingContext::set_common_editing_state (XMLNode const & node)
 
 	double z;
 	if (node.get_property ("zoom", z)) {
-		/* older versions of ardour used floating point samples_per_pixel */
-		reset_zoom (llrintf (z));
+		reset_zoom (z);
 	} else {
 		reset_zoom (samples_per_pixel);
 	}
@@ -2899,7 +2898,7 @@ EditingContext::reset_y_origin (double y)
 }
 
 void
-EditingContext::reset_zoom (samplecnt_t spp)
+EditingContext::reset_zoom (double spp)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
@@ -2910,7 +2909,7 @@ EditingContext::reset_zoom (samplecnt_t spp)
 	std::pair<timepos_t, timepos_t> ext = max_zoom_extent();
 	samplecnt_t p = (ext.second.samples() - ext.first.samples())  / _track_canvas_width;
 
-	if (spp == 0) {
+	if (!std::isfinite (spp) || spp <= 0) {
 		/* less samples than pixels */
 		spp = 1;
 	}
@@ -2921,9 +2920,7 @@ EditingContext::reset_zoom (samplecnt_t spp)
 	}
 	samplecnt_t max_extents_pp = max_extents_scale() * p;
 
-	if (spp > max_extents_pp) {
-		spp = max_extents_pp;
-	}
+	spp = std::max (minimum_samples_per_pixel, std::min (spp, double (max_extents_pp)));
 
 	if (spp == samples_per_pixel) {
 		return;
@@ -3300,7 +3297,11 @@ EditingContext::temporal_zoom_step_scale (bool zoom_out, double scale)
 
 	ENSURE_GUI_THREAD (*this, &EditingContext::temporal_zoom_step, zoom_out, scale)
 
-	samplecnt_t nspp = samples_per_pixel;
+	if (_track_canvas_width <= 0) {
+		return;
+	}
+
+	double nspp = samples_per_pixel;
 
 	if (zoom_out) {
 		nspp *= scale;
@@ -3317,7 +3318,7 @@ EditingContext::temporal_zoom_step_scale (bool zoom_out, double scale)
 	//zoom-behavior-tweaks
 	//limit our maximum zoom to the session gui extents value
 	std::pair<timepos_t, timepos_t> ext = max_zoom_extent();
-	samplecnt_t session_extents_pp = (ext.second.samples() - ext.first.samples())  / _track_canvas_width;
+	const double session_extents_pp = std::max (minimum_samples_per_pixel, (ext.second.samples() - ext.first.samples()) / _track_canvas_width);
 	if (nspp > session_extents_pp) {
 		nspp = session_extents_pp;
 	}
@@ -3326,15 +3327,15 @@ EditingContext::temporal_zoom_step_scale (bool zoom_out, double scale)
 }
 
 void
-EditingContext::temporal_zoom (samplecnt_t spp)
+EditingContext::temporal_zoom (double spp)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
-	if (!_session) {
+	if (!_session || _track_canvas_width <= 0 || !std::isfinite (spp)) {
 		return;
 	}
 
-	samplepos_t current_page = current_page_samples();
+	const samplepos_t current_page = std::max<samplepos_t> (1, current_page_samples());
 	samplepos_t current_leftmost = _leftmost_sample;
 	samplepos_t current_rightmost;
 	samplepos_t current_center;
@@ -3344,7 +3345,7 @@ EditingContext::temporal_zoom (samplecnt_t spp)
 	samplepos_t where;
 	bool in_track_canvas;
 	bool use_mouse_sample = true;
-	samplecnt_t nspp;
+	double nspp;
 	double l;
 
 	if (spp == samples_per_pixel) {
@@ -3359,8 +3360,10 @@ EditingContext::temporal_zoom (samplecnt_t spp)
 	// all of which is used for the editor track displays. The whole day
 	// would be 4147200000 samples, so 2592000 samples per pixel.
 
-	nspp = std::min (spp, (samplecnt_t) 2592000);
-	nspp = std::max ((samplecnt_t) 1, nspp);
+	nspp = std::max (minimum_samples_per_pixel, std::min (spp, 2592000.0));
+	if (nspp == samples_per_pixel) {
+		return;
+	}
 
 	new_page_size = (samplepos_t) floor (_track_canvas_width * nspp);
 	half_page_size = new_page_size / 2;
@@ -3475,7 +3478,7 @@ EditingContext::calc_extra_zoom_edges (samplepos_t &start, samplepos_t &end)
 	const double one_centimeter_in_pixels = pix_per_mm * 10.0;
 
 	const samplepos_t range = end - start;
-	const samplecnt_t new_fpp = (samplecnt_t) ceil ((double) range / (double) _track_canvas_width);
+	const double new_fpp = std::max (minimum_samples_per_pixel, double (range) / _track_canvas_width);
 	const samplepos_t extra_samples = (samplepos_t) floor (one_centimeter_in_pixels * new_fpp);
 
 	if (start > extra_samples) {
@@ -3505,7 +3508,7 @@ EditingContext::temporal_zoom_by_sample (samplepos_t start, samplepos_t end)
 
 	samplepos_t range = end - start;
 
-	const samplecnt_t new_fpp = (samplecnt_t) ceil ((double) range / (double) _track_canvas_width);
+	const double new_fpp = std::max (minimum_samples_per_pixel, double (range) / _track_canvas_width);
 
 	samplepos_t new_page = range;
 	samplepos_t middle = (samplepos_t) floor ((double) start + ((double) range / 2.0f));
@@ -3531,28 +3534,8 @@ EditingContext::temporal_zoom_to_sample (bool coarser, samplepos_t sample)
 		return;
 	}
 
-	samplecnt_t range_before = sample - _leftmost_sample;
-	samplecnt_t new_spp;
-
-	if (coarser) {
-		if (samples_per_pixel <= 1) {
-			new_spp = 2;
-		} else {
-			new_spp = samples_per_pixel + (samples_per_pixel/2);
-		}
-		range_before += range_before/2;
-	} else {
-		if (samples_per_pixel >= 1) {
-			new_spp = samples_per_pixel - (samples_per_pixel/2);
-		} else {
-			/* could bail out here since we cannot zoom any finer,
-			   but leave that to the equality test below
-			*/
-			new_spp = samples_per_pixel;
-		}
-
-		range_before -= range_before/2;
-	}
+	const double new_spp = std::max (minimum_samples_per_pixel, std::min (2592000.0, samples_per_pixel * (coarser ? 1.5 : 2.0 / 3.0)));
+	const samplecnt_t range_before = llround ((sample - _leftmost_sample) * new_spp / samples_per_pixel);
 
 	if (new_spp == samples_per_pixel)  {
 		return;

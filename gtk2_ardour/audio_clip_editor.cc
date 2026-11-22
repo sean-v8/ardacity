@@ -663,7 +663,7 @@ AudioClipEditor::region_changed (const PBD::PropertyChange& what_changed)
 }
 
 void
-AudioClipEditor::set_samples_per_pixel (samplecnt_t spp)
+AudioClipEditor::set_samples_per_pixel (double spp)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 

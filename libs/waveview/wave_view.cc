@@ -923,6 +923,64 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 
 	assert (n_peaks > 0 && n_peaks < 32767);
 
+	if (props.samples_per_pixel < 1.0) {
+		const samplecnt_t count = props.get_length_samples ();
+		std::vector<Sample> samples (count);
+		const samplecnt_t read = count > 0
+			? region->read (samples.data (), props.get_sample_start () - props.region_start, count, props.channel)
+			: 0;
+		if (req->stopped ()) {
+			return;
+		}
+
+		std::vector<gain_t> envelope;
+		if (props.envelope_active && read > 0) {
+			envelope.resize (read);
+			const samplecnt_t offset = props.envelope_shifting
+				? region->last_start ().distance (region->start ()).samples () : 0;
+			region->read_waveform_envelope (envelope.data (), read, props.get_sample_start () + offset, read);
+		}
+
+		auto image = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, n_peaks, props.height);
+		auto context = Cairo::Context::create (image);
+		const bool rectified = props.shape == WaveView::Rectified;
+		const double zero = rectified ? props.height - 0.5 : props.height * 0.5;
+		const double extent = rectified ? props.height - 1.0 : zero - 0.5;
+		if (props.show_zero && !rectified) {
+			set_source_rgba (context, props.zero_color);
+			context->set_line_width (1.0);
+			context->move_to (0, zero);
+			context->line_to (n_peaks, zero);
+			context->stroke ();
+		}
+
+		const double display_gain = props.amplitude * props.amplitude_above_axis;
+		const double radius = std::min (2.0, 0.35 / props.samples_per_pixel);
+		context->set_line_width (1.0);
+		for (samplecnt_t i = 0; i < read; ++i) {
+			double value = samples[i] * display_gain * (envelope.empty () ? 1.0 : envelope[i]);
+			if (props.logscaled) {
+				value = std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (value))), value);
+			}
+			if (rectified) {
+				value = std::abs (value);
+			}
+			const double x = i / props.samples_per_pixel + 0.5;
+			const double y = zero - extent * std::max (-1.0, std::min (1.0, value));
+			set_source_rgba (context, props.fill_color);
+			context->move_to (x, zero);
+			context->line_to (x, y);
+			context->stroke ();
+			set_source_rgba (context, props.outline_color);
+			context->arc (x, y, radius, 0.0, 2.0 * M_PI);
+			context->fill ();
+		}
+		if (!req->stopped ()) {
+			req->image->cairo_image = image;
+		}
+		return;
+	}
+
 	std::unique_ptr<ARDOUR::PeakData[]> peaks (new PeakData[n_peaks]);
 
 	/* Note that Region::read_peaks() takes a start position based on an
