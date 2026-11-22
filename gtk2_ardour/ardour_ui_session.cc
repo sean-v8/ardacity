@@ -41,7 +41,9 @@
 #include <cstring>
 
 #ifndef PLATFORM_WINDOWS
+#include <fcntl.h>
 #include <unistd.h>
+#include <gio/gio.h>
 #endif
 
 #include <glibmm/error.h>
@@ -763,6 +765,49 @@ recording_folder_wavs (const string& folder)
 	return paths;
 }
 
+#ifndef PLATFORM_WINDOWS
+static void
+prepare_recording_folder_export (const std::string& parent)
+{
+	const std::string basename = Glib::path_get_basename (parent);
+	const std::string folder = Glib::build_filename (parent, basename);
+
+	if (g_mkdir (folder.c_str (), 0755) != 0 &&
+	    (errno != EEXIST || !Glib::file_test (folder, Glib::FILE_TEST_IS_DIR) ||
+	     Glib::file_test (folder, Glib::FILE_TEST_IS_SYMLINK))) {
+		PBD::warning << string_compose (_("Could not prepare export folder %1"), folder) << endmsg;
+		return;
+	}
+
+	const std::string notes = Glib::build_filename (folder, basename + ".txt");
+	const int fd = g_open (notes.c_str (), O_WRONLY | O_CREAT | O_EXCL, 0666);
+	if (fd >= 0) {
+		close (fd);
+	} else if (errno != EEXIST || !Glib::file_test (notes, Glib::FILE_TEST_IS_REGULAR) ||
+	           Glib::file_test (notes, Glib::FILE_TEST_IS_SYMLINK)) {
+		PBD::warning << string_compose (_("Could not prepare export notes %1"), notes) << endmsg;
+		return;
+	}
+
+	GAppInfo* editor = g_app_info_get_default_for_type ("text/plain", false);
+	if (!editor) {
+		PBD::warning << string_compose (_("No default text editor for %1"), notes) << endmsg;
+		return;
+	}
+
+	GFile* file = g_file_new_for_path (notes.c_str ());
+	GList files = { file, nullptr, nullptr };
+	GError* launch_error = nullptr;
+	if (!g_app_info_launch (editor, &files, nullptr, &launch_error)) {
+		PBD::warning << string_compose (_("Could not open export notes %1: %2"), notes, launch_error->message) << endmsg;
+		g_clear_error (&launch_error);
+	}
+
+	g_object_unref (file);
+	g_object_unref (editor);
+}
+#endif
+
 int
 ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder)
 {
@@ -905,6 +950,8 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 		} else if (symlink (relative_target.c_str (), visible_link.c_str ()) != 0) {
 			ArdourMessageDialog msg (string_compose (_("Could not create session link \"%1\": %2. The session was saved in \"%3\"."), visible_link, g_strerror (errno), path));
 			msg.run ();
+		} else {
+			prepare_recording_folder_export (Glib::path_get_dirname (path));
 		}
 	}
 #else
