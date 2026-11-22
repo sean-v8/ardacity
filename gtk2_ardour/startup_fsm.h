@@ -19,6 +19,7 @@
 #ifndef __gtk2_ardour_startup_fsm_h__
 #define __gtk2_ardour_startup_fsm_h__
 
+#include <optional>
 #include <string>
 
 #include <sigc++/trackable.h>
@@ -78,6 +79,7 @@ class StartupFSM : public sigc::trackable
 	XMLNode              session_engine_hints;
 	bool                 session_is_new;
 	bool                 session_in_recording_folder;
+	std::optional<double> import_peak_target;
 	bool                 session_name_edited;
 	bool                 session_loaded;
 

@@ -526,6 +526,23 @@ SessionDialog::select_recording_folder (const std::string& folder)
 	return true;
 }
 
+std::optional<double>
+SessionDialog::import_peak_target ()
+{
+	if (!use_recording_folder () || !_normalize_folder_imports.get_active ()) {
+		return std::nullopt;
+	}
+	_import_peak_target.update ();
+	return _import_peak_target.get_value ();
+}
+
+void
+SessionDialog::update_folder_normalization_sensitivity ()
+{
+	_normalize_folder_imports.set_sensitive (_use_recording_folder.get_active ());
+	_import_peak_target.set_sensitive (_use_recording_folder.get_active () && _normalize_folder_imports.get_active ());
+}
+
 bool
 SessionDialog::validate_recording_folder (const std::string& folder, const std::string& name)
 {
@@ -1040,6 +1057,28 @@ SessionDialog::setup_new_session_page ()
 	new_folder_chooser.signal_file_set ().connect (
 		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
 	session_new_vbox.pack_start (_use_recording_folder, false, true);
+
+	_normalize_folder_imports.set_label (_("Normalize imported tracks"));
+	_normalize_folder_imports.set_active (UIConfiguration::instance ().get_normalize_existing_folder_imports ());
+	_import_peak_target.set_range (-112., 0.);
+	_import_peak_target.set_increments (0.01, 1.);
+	_import_peak_target.set_digits (2);
+	_import_peak_target.set_numeric (true);
+	_import_peak_target.set_value (UIConfiguration::instance ().get_existing_folder_import_peak ());
+
+	HBox* normalize_box = manage (new HBox (false, 8));
+	normalize_box->pack_start (_normalize_folder_imports, false, true);
+	Label* peak_label = manage (new Label (_("Peak target (dBFS)")));
+	peak_label->set_mnemonic_widget (_import_peak_target);
+	normalize_box->pack_start (*peak_label, false, true);
+	normalize_box->pack_start (_import_peak_target, false, true);
+	session_new_vbox.pack_start (*normalize_box, false, true);
+
+	_use_recording_folder.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::update_folder_normalization_sensitivity));
+	_normalize_folder_imports.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::update_folder_normalization_sensitivity));
+	update_folder_normalization_sensitivity ();
 #endif
 	session_new_vbox.pack_start (*name_hbox, false, true);
 	session_new_vbox.show_all ();

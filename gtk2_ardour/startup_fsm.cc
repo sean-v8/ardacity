@@ -590,6 +590,7 @@ StartupFSM::get_session_parameters_from_path (string const & path_, string const
 	}
 
 	session_in_recording_folder = false;
+	import_peak_target.reset ();
 	string path (path_);
 
 	if (Glib::file_test (path.c_str(), Glib::FILE_TEST_EXISTS)) {
@@ -746,6 +747,7 @@ StartupFSM::check_session_parameters (bool must_be_new)
 	session_name_edited = session_dialog->was_new_name_edited ();
 
 	session_in_recording_folder = session_dialog->use_recording_folder ();
+	import_peak_target = session_dialog->import_peak_target ();
 	if (session_in_recording_folder) {
 		if (!session_dialog->validate_recording_folder (session_path, session_name)) {
 			return 1;

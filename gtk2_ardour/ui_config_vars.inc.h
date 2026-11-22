@@ -50,6 +50,8 @@ UI_CONFIG_VARIABLE (std::string, keyboard_layout_name, "keyboard-layout-name", "
 UI_CONFIG_VARIABLE (std::string, default_bindings, "default-bindings", "ardour")
 UI_CONFIG_VARIABLE (std::string, vkeybd_layout, "vkeybd-layout", "QWERTY Single")
 UI_CONFIG_VARIABLE (bool, create_in_existing_folder_by_default, "create-in-existing-folder-by-default", true)
+UI_CONFIG_VARIABLE (bool, normalize_existing_folder_imports, "normalize-existing-folder-imports", false)
+UI_CONFIG_VARIABLE (double, existing_folder_import_peak, "existing-folder-import-peak", -0.02)
 UI_CONFIG_VARIABLE (bool, only_copy_imported_files, "only-copy-imported-files", true)
 UI_CONFIG_VARIABLE (bool, autoplay_files, "autoplay-files", false)
 UI_CONFIG_VARIABLE (bool, autoplay_clips, "autoplay-clips", true)

@@ -656,7 +656,7 @@ ARDOUR_UI::load_session_from_startup_fsm ()
 
 	if (session_is_new) {
 
-		if (build_session (session_path, session_name, session_template, bus_profile, true, session_was_not_named, session_domain, startup_fsm->session_in_recording_folder)) {
+		if (build_session (session_path, session_name, session_template, bus_profile, true, session_was_not_named, session_domain, startup_fsm->session_in_recording_folder, startup_fsm->import_peak_target)) {
 			return -1;
 		}
 		return 0;

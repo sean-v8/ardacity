@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 
 #ifndef PLATFORM_WINDOWS
@@ -57,6 +58,7 @@
 
 #include "pbd/basename.h"
 #include "pbd/localtime_r.h"
+#include "pbd/stateful_diff_command.h"
 #include "pbd/unwind.h"
 
 #include "gtkmm2ext/application.h"
@@ -67,13 +69,16 @@
 
 #include "ardour/audioengine.h"
 #include "ardour/audiofilesource.h"
+#include "ardour/audioregion.h"
 #include "ardour/filename_extensions.h"
+#include "ardour/playlist.h"
 #include "ardour/plugin_manager.h"
 #include "ardour/profile.h"
 #include "ardour/session.h"
 #include "ardour/session_utils.h"
 #include "ardour/session_state_utils.h"
 #include "ardour/session_directory.h"
+#include "ardour/track.h"
 #include "ardour/wrong_program.h"
 
 #include "ardour_message.h"
@@ -83,6 +88,7 @@
 #include "missing_plugin_dialog.h"
 #include "opts.h"
 #include "plugin_scan_dialog.h"
+#include "progress_reporter.h"
 #include "public_editor.h"
 #include "save_as_dialog.h"
 #include "session_dialog.h"
@@ -142,7 +148,7 @@ ARDOUR_UI::build_session_from_dialog (SessionDialog& sd, const std::string& sess
 		bus_profile.master_out_channels = (uint32_t) sd.master_channel_count();
 	}
 
-	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain, !nsm && sd.use_recording_folder ());
+	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain, !nsm && sd.use_recording_folder (), sd.import_peak_target ());
 }
 
 /** This is only ever used once Ardour is already running with a session
@@ -663,7 +669,7 @@ ARDOUR_UI::load_session_stage_two (const std::string& path, const std::string& s
 }
 
 int
-ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain, bool recording_folder)
+ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain, bool recording_folder, std::optional<double> import_peak)
 {
 	int x;
 
@@ -682,11 +688,11 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	 * asked for the SR (even if try-autostart-engine is set)
 	 */
 	if (from_startup_fsm && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 	}
 	/* Sample-rate cannot be changed when JACK is running */
 	if (!ARDOUR::AudioEngine::instance()->setup_required () && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 	}
 
 	/* Work-around missing "OK" button:
@@ -702,7 +708,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	audio_midi_setup->set_position (WIN_POS_CENTER);
 	audio_midi_setup->set_modal ();
 	audio_midi_setup->present ();
-	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain, recording_folder));
+	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain, recording_folder, import_peak));
 
 	/* not done yet, but we're avoiding modal dialogs */
 	return 0;
@@ -710,7 +716,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 
 
 void
-ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, bool recording_folder)
+ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, bool recording_folder, std::optional<double> import_peak)
 {
 	_engine_dialog_connection.disconnect ();
 
@@ -728,8 +734,94 @@ ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path
 	audio_midi_setup->set_modal (false);
 	audio_midi_setup->hide();
 
-	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain, 0, recording_folder);
+	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 }
+
+namespace {
+
+class ImportPeakProgress : public ArdourDialog, public ProgressReporter
+{
+public:
+	ImportPeakProgress ()
+		: ArdourDialog (_("Normalizing imported tracks"), true)
+	{
+		set_position (WIN_POS_CENTER);
+		get_vbox ()->set_size_request (400, -1);
+		get_vbox ()->pack_start (_bar, PACK_SHRINK, 4);
+		add_button (Stock::CANCEL, RESPONSE_CANCEL);
+		signal_response ().connect ([this] (int) { cancel (); });
+	}
+
+private:
+	void update_progress_gui (float fraction) override
+	{
+		_bar.set_fraction (fraction);
+	}
+
+	ProgressBar _bar;
+};
+
+void
+normalize_newly_imported_tracks (Session& session, const RouteList& previous_tracks, double target)
+{
+	vector<std::shared_ptr<AudioRegion>> regions;
+	const auto tracks = session.get_tracks ();
+	for (const auto& route : *tracks) {
+		if (std::find (previous_tracks.begin (), previous_tracks.end (), route) != previous_tracks.end ()) {
+			continue;
+		}
+
+		const auto track = std::dynamic_pointer_cast<Track> (route);
+		const auto playlist_regions = track->playlist ()->region_list ();
+		for (const auto& region : *playlist_regions) {
+			if (auto audio = std::dynamic_pointer_cast<AudioRegion> (region)) {
+				regions.push_back (audio);
+			}
+		}
+	}
+
+	if (regions.empty ()) {
+		return;
+	}
+
+	ImportPeakProgress progress;
+	progress.show_all ();
+	vector<double> peaks;
+	peaks.reserve (regions.size ());
+	for (const auto& region : regions) {
+		progress.descend (1.f / regions.size ());
+		peaks.push_back (region->maximum_amplitude (&progress));
+		progress.ascend ();
+		if (progress.cancelled ()) {
+			return;
+		}
+	}
+	progress.hide ();
+
+	bool changed = false;
+	for (size_t i = 0; i < regions.size (); ++i) {
+		if (peaks[i] <= 0 || !std::isfinite (peaks[i])) {
+			continue;
+		}
+
+		const auto& region = regions[i];
+		const auto prior_gain = region->scale_amplitude ();
+		region->clear_changes ();
+		region->normalize (peaks[i], target);
+		if (prior_gain != region->scale_amplitude ()) {
+			if (!changed) {
+				session.begin_reversible_command (_("Normalize imported tracks"));
+				changed = true;
+			}
+			session.add_command (new StatefulDiffCommand (region));
+		}
+	}
+	if (changed) {
+		session.commit_reversible_command ();
+	}
+}
+
+} // namespace
 
 static vector<string>
 recording_folder_wavs (const string& folder)
@@ -808,7 +900,7 @@ prepare_recording_folder_export (const std::string& parent, const std::string& s
 #endif
 
 int
-ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder)
+ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder, std::optional<double> import_peak)
 {
 	PBD::Unwinder uw (_loading_session, true);
 
@@ -935,7 +1027,11 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 		const vector<string> wavs = recording_folder_wavs (Glib::path_get_dirname (path));
 		if (!wavs.empty ()) {
 			Temporal::timepos_t start (new_session->current_start_sample ());
+			const auto previous_tracks = import_peak ? new_session->get_tracks () : nullptr;
 			PublicEditor::instance ().do_embed (wavs, Editing::ImportDistinctFiles, Editing::ImportAsTrack, false, start);
+			if (previous_tracks) {
+				normalize_newly_imported_tracks (*new_session, *previous_tracks, *import_peak);
+			}
 		}
 	}
 

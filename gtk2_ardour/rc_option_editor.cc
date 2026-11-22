@@ -2569,6 +2569,25 @@ RCOptionEditor::RCOptionEditor ()
 			    sigc::mem_fun (*_rc_config, &RCConfiguration::set_default_session_parent_dir)
 			    ));
 
+#ifndef PLATFORM_WINDOWS
+	add_option (_("General"),
+	     new BoolOption (
+		     "normalize-existing-folder-imports",
+		     _("Normalize existing-folder imports by default"),
+		     sigc::mem_fun (UIConfiguration::instance (), &UIConfiguration::get_normalize_existing_folder_imports),
+		     sigc::mem_fun (UIConfiguration::instance (), &UIConfiguration::set_normalize_existing_folder_imports)
+		     ));
+
+	add_option (_("General"),
+	     new SpinOption<double> (
+		     "existing-folder-import-peak",
+		     _("Default import peak target"),
+		     sigc::mem_fun (UIConfiguration::instance (), &UIConfiguration::get_existing_folder_import_peak),
+		     sigc::mem_fun (UIConfiguration::instance (), &UIConfiguration::set_existing_folder_import_peak),
+		     -112., 0., 0.01, 1., _("dBFS"), 1, 2
+		     ));
+#endif
+
 	add_option (_("General"),
 	     new SpinOption<uint32_t> (
 		     "max-recent-sessions",
