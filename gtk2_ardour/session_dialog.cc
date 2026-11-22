@@ -274,6 +274,11 @@ SessionDialog::SessionDialog (DialogTab initial_tab, const std::string& session_
 	setup_untitled_session ();
 	setup_recent_sessions ();
 
+#ifndef PLATFORM_WINDOWS
+	_use_recording_folder.set_active (
+		UIConfiguration::instance ().get_create_in_existing_folder_by_default ());
+#endif
+
 	if (!Config->get_demo_session_index_url ().empty ()) {
 		setup_demo_sessions ();
 	}

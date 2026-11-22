@@ -2544,6 +2544,16 @@ RCOptionEditor::RCOptionEditor ()
 
 	add_option (_("General"), new OptionEditorHeading (_("Session Management")));
 
+#ifndef PLATFORM_WINDOWS
+	add_option (_("General"),
+	     new BoolOption (
+		     "create-in-existing-folder-by-default",
+		     _("Create sessions in existing folders by default"),
+		     sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_create_in_existing_folder_by_default),
+		     sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_create_in_existing_folder_by_default)
+		     ));
+#endif
+
 	add_option (_("General"),
 	     new BoolOption (
 		     "periodic-safety-backups",
