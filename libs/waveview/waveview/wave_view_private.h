@@ -88,7 +88,7 @@ public: // methods
 		assert (width_samples != 0);
 		ARDOUR::samplecnt_t half_width = width_samples / 2;
 		samplepos_t new_sample_start = std::max (region_start, get_center_sample () - half_width);
-		samplepos_t new_sample_end = std::min (get_center_sample () + half_width, region_end);
+		samplepos_t new_sample_end = std::min (get_center_sample () + (width_samples - half_width), region_end);
 		assert (new_sample_start <= new_sample_end);
 		sample_start = new_sample_start;
 		sample_end = new_sample_end;
@@ -142,7 +142,7 @@ public: // methods
 		 * so we have to do bounds checking/adjustment for this in set_sample_offsets.
 		 */
 		samplepos_t new_sample_start = region_start + (start_pixel * samples_per_pixel);
-		samplepos_t new_sample_end = region_start + (end_pixel * samples_per_pixel);
+		samplepos_t new_sample_end = region_start + std::ceil (end_pixel * samples_per_pixel);
 		set_sample_offsets (new_sample_start, new_sample_end);
 	}
 

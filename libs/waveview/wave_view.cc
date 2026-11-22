@@ -907,18 +907,18 @@ WaveView::optimal_image_width_samples () const
 	 * zoom levels(1 sample per pixel) can cause 1/10 of a second(in
 	 * pixels) to exceed the cairo image size limit.
 	 */
-	const double cairo_image_limit = 32767.0;
+	const double cairo_image_limit = 32766.0;
 	const double max_image_width = cairo_image_limit / max_multiplier;
 
 	samplecnt_t max_width_samples = floor (max_image_width / _props->samples_per_pixel);
 
 	const samplecnt_t one_tenth_of_second_limited = std::min (one_tenth_of_second, max_width_samples);
 
-	samplecnt_t new_sample_count = std::max (canvas_width_samples, one_tenth_of_second_limited);
+	const samplecnt_t new_sample_count = std::min (max_width_samples, std::max (canvas_width_samples, one_tenth_of_second_limited));
 
 	const double multiplier = g_random_double_range (min_multiplier, max_multiplier);
 
-	return new_sample_count * multiplier;
+	return std::max<samplecnt_t> (1, new_sample_count * multiplier);
 }
 
 void
@@ -945,9 +945,11 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 
 	WaveViewProperties const& props = req->image->props;
 
-	const int n_peaks = props.get_width_pixels ();
-
-	assert (n_peaks > 0 && n_peaks < 32767);
+	const uint64_t width = props.get_width_pixels ();
+	if (width >= 32767) {
+		return;
+	}
+	const int n_peaks = width;
 
 	if (props.samples_per_pixel < 1.0) {
 		const samplecnt_t count = props.get_length_samples ();
@@ -1103,7 +1105,6 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	Rect self;
 
 	if (!get_item_and_draw_rect_in_window_coords (area, self, draw)) {
-		assert(false);
 		return;
 	}
 
@@ -1134,7 +1135,9 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	required_props.set_sample_positions_from_pixel_offsets (image_start_pixel_offset,
 	                                                        image_end_pixel_offset);
 
-	assert (required_props.is_valid());
+	if (!required_props.is_valid ()) {
+		return;
+	}
 
 	std::shared_ptr<WaveViewImage> image_to_draw;
 
@@ -1217,7 +1220,9 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	/* reset this so that future missing images can be generated in a worker thread. */
 	_draw_image_in_gui_thread = false;
 
-	assert (image_to_draw);
+	if (!image_to_draw || !image_to_draw->finished ()) {
+		return;
+	}
 
 	/* Calculate the sample that corresponds to the region-rectangle's left edge
 	 * in the editor at current zoom (see TimeAxisViewItem::set_position).

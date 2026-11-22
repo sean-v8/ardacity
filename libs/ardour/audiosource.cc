@@ -785,76 +785,40 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 		 * data on the fly.
 		*/
 
-		samplecnt_t samples_read = 0;
-		samplepos_t current_sample = start;
-		samplecnt_t i = 0;
-		samplecnt_t nvisual_peaks = 0;
-		samplecnt_t chunksize = (samplecnt_t) min (cnt, (samplecnt_t) 4096);
-		std::unique_ptr<Sample[]> raw_staging(new Sample[chunksize]);
+		/* Use pixel boundaries relative to the image's first sample. Advancing
+		 * from the previous sample's pixel can skip a column near 1 sample/pixel.
+		 */
+		if (cnt <= 0) {
+			std::fill_n (peaks, npeaks, PeakData {});
+			return 0;
+		}
+		const samplecnt_t chunk_size = std::min<samplecnt_t> (cnt, 4096);
+		std::unique_ptr<Sample[]> buffer (new Sample[chunk_size]);
+		samplecnt_t offset = 0;
+		samplecnt_t in_buffer = 0;
+		samplecnt_t index = 0;
 
-		double pixel_pos         = start / samples_per_visual_peak;
-		double next_pixel_pos    = 1.0 + floor (pixel_pos);
-		double pixels_per_sample = 1.0 / samples_per_visual_peak;
-
-		xmin = 1.0;
-		xmax = -1.0;
-
-		double energy = 0;
-		samplecnt_t weight = 0;
-		while (nvisual_peaks < read_npeaks) {
-
-			if (i == samples_read) {
-
-				to_read = min (chunksize, (samplecnt_t)(_length.samples() - current_sample));
-
-				if (current_sample >= _length.samples()) {
-
-					/* hmm, error condition - we've reached the end of the file
-					 * without generating all the peak data. cook up a zero-filled
-					 * data buffer and then use it. this is simpler than
-					 * adjusting zero_fill and read_npeaks and then breaking out of
-					 * this loop early
-					 */
-
-					memset (raw_staging.get(), 0, sizeof (Sample) * chunksize);
-
-				} else {
-
-					to_read = min (chunksize, (_length.samples() - current_sample));
-
-
-					if ((samples_read = read_unlocked (raw_staging.get(), current_sample, to_read)) == 0) {
-						error << string_compose(_("AudioSource[%1]: peak read - cannot read %2 samples at offset %3 of %4 (%5)"),
-						                        _name, to_read, current_sample, _length, strerror (errno))
-						     << endmsg;
+		for (samplecnt_t column = 0; column < read_npeaks; ++column) {
+			const samplecnt_t end = std::min<samplecnt_t> (cnt, std::llround ((column + 1) * samples_per_visual_peak));
+			PeakData peak {};
+			double energy = 0;
+			const samplecnt_t count = std::max<samplecnt_t> (0, end - offset);
+			for (samplecnt_t n = 0; n < count; ++n, ++offset) {
+				if (index == in_buffer) {
+					const samplecnt_t to_read = std::min (chunk_size, cnt - offset);
+					in_buffer = read_unlocked (buffer.get (), start + offset, to_read);
+					if (in_buffer <= 0) {
 						return -1;
 					}
+					index = 0;
 				}
-
-				i = 0;
+				const Sample value = buffer[index++];
+				peak.min = n ? std::min (peak.min, value) : value;
+				peak.max = n ? std::max (peak.max, value) : value;
+				energy += double (value) * value;
 			}
-
-			xmax = max (xmax, raw_staging[i]);
-			xmin = min (xmin, raw_staging[i]);
-			energy += double (raw_staging[i]) * raw_staging[i];
-			++weight;
-			++i;
-			++current_sample;
-			pixel_pos += pixels_per_sample;
-
-			if (pixel_pos >= next_pixel_pos) {
-
-				peaks[nvisual_peaks].max = xmax;
-				peaks[nvisual_peaks].min = xmin;
-				peaks[nvisual_peaks].rms = std::sqrt (energy / weight);
-				energy = 0;
-				weight = 0;
-				++nvisual_peaks;
-				xmin = 1.0;
-				xmax = -1.0;
-
-				next_pixel_pos = ceil (pixel_pos + 0.5);
-			}
+			peak.rms = count ? std::sqrt (energy / count) : 0;
+			peaks[column] = peak;
 		}
 
 		if (zero_fill) {
