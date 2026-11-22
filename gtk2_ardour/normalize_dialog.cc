@@ -18,6 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <algorithm>
+
 #include <ytkmm/comboboxtext.h>
 #include <ytkmm/label.h>
 #include <ytkmm/spinbutton.h>
@@ -25,6 +27,8 @@
 #include <ytkmm/stock.h>
 #include <ytkmm/table.h>
 #include <ytkmm/progressbar.h>
+
+#include "ardour/rc_configuration.h"
 
 #include "normalize_dialog.h"
 
@@ -208,4 +212,117 @@ NormalizeDialog::button_clicked (int r)
 	if (r == RESPONSE_CANCEL) {
 		cancel ();
 	}
+}
+
+NormalizeTargetDialog::NormalizeTargetDialog (bool loudness)
+	: ArdourDialog (loudness ? _("Normalize to Loudness") : _("Normalize to Peak"), true)
+	, _loudness (loudness)
+	, _target (manage (new SpinButton (0.2, 2)))
+	, _ceiling (loudness ? manage (new SpinButton (0.2, 2)) : 0)
+	, _settings (manage (new Table))
+	, _progress (manage (new ProgressBar))
+{
+	double target = loudness ? -14.0 : -0.02;
+	double ceiling = -1.0;
+	if (XMLNode const* state = ARDOUR::Config->instant_xml (X_("NormalizeTargetDialog"))) {
+		state->get_property (loudness ? X_("loudness-target") : X_("peak-target"), target);
+		if (loudness) {
+			state->get_property (X_("peak-ceiling"), ceiling);
+		}
+	}
+
+	_settings->set_spacings (6);
+	_target->set_range (loudness ? -48 : -112, 0);
+	_target->set_increments (0.1, 1);
+	_target->set_value (target);
+	_target->set_activates_default ();
+	_settings->attach (*manage (new Label (loudness ? _("Target (LUFS)") : _("Target (dBFS)"), ALIGN_END)), 0, 1, 0, 1, FILL, SHRINK);
+	_settings->attach (*_target, 1, 2, 0, 1, FILL, SHRINK);
+
+	if (_ceiling) {
+		_ceiling->set_range (-112, 0);
+		_ceiling->set_increments (0.1, 1);
+		_ceiling->set_value (ceiling);
+		_ceiling->set_activates_default ();
+		_settings->attach (*manage (new Label (_("True-peak ceiling (dBTP)"), ALIGN_END)), 0, 1, 1, 2, FILL, SHRINK);
+		_settings->attach (*_ceiling, 1, 2, 1, 2, FILL, SHRINK);
+	}
+
+	get_vbox ()->set_spacing (12);
+	get_vbox ()->pack_start (*_settings, PACK_SHRINK);
+	get_vbox ()->pack_start (*_progress, PACK_SHRINK);
+	_settings->show_all ();
+
+	add_button (Stock::CANCEL, RESPONSE_CANCEL);
+	add_button (_("Normalize"), RESPONSE_ACCEPT);
+	set_default_response (RESPONSE_ACCEPT);
+	_target->grab_focus ();
+	_target->select_region (0, -1);
+}
+
+double
+NormalizeTargetDialog::target ()
+{
+	_target->update ();
+	return _target->get_value ();
+}
+
+double
+NormalizeTargetDialog::peak_ceiling ()
+{
+	if (!_ceiling) {
+		return 0;
+	}
+	_ceiling->update ();
+	return _ceiling->get_value ();
+}
+
+void
+NormalizeTargetDialog::save_settings (double target, double ceiling)
+{
+	XMLNode const* previous = ARDOUR::Config->instant_xml (X_("NormalizeTargetDialog"));
+	XMLNode state (previous ? *previous : XMLNode (X_("NormalizeTargetDialog")));
+	state.set_property (_loudness ? X_("loudness-target") : X_("peak-target"), target);
+	if (_loudness) {
+		state.set_property (X_("peak-ceiling"), ceiling);
+	}
+	ARDOUR::Config->add_instant_xml (state);
+}
+
+void
+NormalizeTargetDialog::start_analysis ()
+{
+	_settings->set_sensitive (false);
+	set_response_sensitive (RESPONSE_ACCEPT, false);
+	_progress->show ();
+	set_progress (0);
+}
+
+void
+NormalizeTargetDialog::on_response (int response_id)
+{
+	if (response_id != RESPONSE_ACCEPT) {
+		cancel ();
+	}
+	Gtk::Dialog::on_response (response_id);
+}
+
+bool
+NormalizeTargetDialog::on_delete_event (GdkEventAny*)
+{
+	/* Gtk::Dialog has emitted RESPONSE_DELETE_EVENT. Keep this stack-owned dialog alive. */
+	return true;
+}
+
+void
+NormalizeTargetDialog::on_hide ()
+{
+	cancel ();
+	ArdourDialog::on_hide ();
+}
+
+void
+NormalizeTargetDialog::update_progress_gui (float fraction)
+{
+	_progress->set_fraction (std::min (1.f, fraction));
 }

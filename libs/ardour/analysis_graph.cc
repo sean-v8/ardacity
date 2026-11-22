@@ -91,12 +91,15 @@ AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progres
 
 			if (raw) {
 				n = region->read_raw_internal (_buf, region->start_sample() + x, chunk, channel);
+				if (n != chunk) {
+					return;
+				}
 			} else {
 				n = region->read_at (_buf, _mixbuf, _gainbuf, region->position_sample() + x, chunk, channel);
 			}
 
 			ConstProcessContext<Sample> context (_buf, n, 1);
-			if (n < _max_chunksize) {
+			if (raw ? x + n == length : n < _max_chunksize) {
 				context().set_flag (ProcessContext<Sample>::EndOfInput);
 			}
 			interleaver->input (channel)->process (context);

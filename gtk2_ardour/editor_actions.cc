@@ -1353,6 +1353,8 @@ Editor::register_region_actions ()
 
 	/* Open the normalize dialogue to operate on the selected regions */
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "normalize-region", _("Normalize..."), sigc::mem_fun(*this, &Editor::normalize_region));
+	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "normalize-region-peak", _("Normalize to Peak..."), sigc::bind (sigc::mem_fun (*this, &Editor::normalize_region_to_target), false));
+	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "normalize-region-loudness", _("Normalize to Loudness..."), sigc::bind (sigc::mem_fun (*this, &Editor::normalize_region_to_target), true));
 
 	/* Reverse selected regions */
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "reverse-region", _("Reverse"), sigc::mem_fun (*this, &Editor::reverse_region));

@@ -1565,6 +1565,9 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 		/* others were already marked sensitive */
 	}
 
+	_region_actions->get_action ("normalize-region-peak")->set_sensitive ((have_selection || have_entered) && have_audio);
+	_region_actions->get_action ("normalize-region-loudness")->set_sensitive ((have_selection || have_entered) && have_audio);
+
 	/* ok, moving along... */
 
 	if (have_compound_regions) {
