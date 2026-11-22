@@ -298,6 +298,8 @@ protected:
 class SoundFileOmega : public SoundFileBrowser
 {
 public:
+	void set_session (ARDOUR::Session*) override;
+
 	SoundFileOmega (std::string title,
 	                ARDOUR::Session* _s,
 	                uint32_t selected_audio_tracks,
@@ -359,5 +361,7 @@ private:
 
 	bool _import_active;
 	bool _reset_post_import;
+	bool _recording_folder_import;
+	int _file_reference_before_forced_copy = -1;
 };
 

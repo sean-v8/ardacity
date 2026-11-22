@@ -46,6 +46,7 @@
 #include "ardour/operations.h"
 #include "ardour/profile.h"
 #include "ardour/region_factory.h"
+#include "ardour/session_utils.h"
 #include "ardour/smf_source.h"
 #include "ardour/source_factory.h"
 #include "ardour/triggerbox.h"
@@ -825,7 +826,14 @@ Editor::add_sources (vector<string>            paths,
 		 * and "merged" region name.
 		 */
 
-		track_names.push_back (region_name);
+		const string basename = Glib::path_get_basename (paths.front ());
+		const bool single_wav = disposition == ImportDistinctFiles && paths.size () == 1 &&
+		                        basename.size () > 4 && g_ascii_strcasecmp (basename.c_str () + basename.size () - 4, ".wav") == 0;
+		if (single_wav && !recording_session_name (_session->path ()).empty ()) {
+			track_names.push_back (basename.substr (0, basename.size () - 4));
+		} else {
+			track_names.push_back (region_name);
+		}
 
 	} else if (target_regions == -1 || target_regions > 1) {
 
@@ -1074,10 +1082,15 @@ Editor::finish_bringing_in_material (std::shared_ptr<Region> region,
 	case ImportAsTrack:
 	{
 		if (!existing_track) {
+			/* Publish audio tracks with their final name so a newly built
+			 * header does not depend on a rename notification.
+			 */
+			const bool name_at_creation = ar && !recording_session_name (_session->path ()).empty ();
+			const string track_name = new_track_name.empty () ? region->name () : new_track_name;
 			if (ar) {
 				AudioTrackList at (
 					_session->new_audio_track (in_chans, out_chans,
-					                           0, 1, string(),
+					                           0, 1, name_at_creation ? track_name : string (),
 					                           PresentationInfo::max_order,
 					                           Normal,
 					                           true,
@@ -1130,10 +1143,8 @@ Editor::finish_bringing_in_material (std::shared_ptr<Region> region,
 				existing_track = mt.front();
 			}
 
-			if (!new_track_name.empty()) {
-				existing_track->set_name (new_track_name);
-			} else {
-				existing_track->set_name (region->name());
+			if (!name_at_creation) {
+				existing_track->set_name (track_name);
 			}
 		}
 

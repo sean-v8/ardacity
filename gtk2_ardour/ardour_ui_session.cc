@@ -36,6 +36,7 @@
 #include "gtk2ardour-version.h"
 #endif
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 
@@ -44,6 +45,7 @@
 #endif
 
 #include <glibmm/error.h>
+#include <glibmm/fileutils.h>
 
 #include "pbd/gstdio_compat.h"
 #include "pbd/pathexpand.h"
@@ -62,6 +64,7 @@
 #include "widgets/prompter.h"
 
 #include "ardour/audioengine.h"
+#include "ardour/audiofilesource.h"
 #include "ardour/filename_extensions.h"
 #include "ardour/plugin_manager.h"
 #include "ardour/profile.h"
@@ -726,6 +729,40 @@ ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path
 	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain, 0, recording_folder);
 }
 
+static vector<string>
+recording_folder_wavs (const string& folder)
+{
+	vector<string> paths;
+	try {
+		Glib::Dir dir (folder);
+		for (const string& name : dir) {
+			if (name.size () < 4 || g_ascii_strcasecmp (name.c_str () + name.size () - 4, ".wav") != 0) {
+				continue;
+			}
+
+			const string path = Glib::build_filename (folder, name);
+			if (!Glib::file_test (path, Glib::FILE_TEST_IS_REGULAR)) {
+				continue;
+			}
+
+			SoundFileInfo info;
+			string reason;
+			if (AudioFileSource::get_soundfile_info (path, info, reason) && info.seekable && info.length > 0) {
+				paths.push_back (path);
+			} else {
+				PBD::warning << string_compose (_("Cannot reference WAV file %1: %2"), path,
+				                                reason.empty () ? _("empty or unreadable audio") : reason)
+				             << endmsg;
+			}
+		}
+	} catch (const Glib::FileError& e) {
+		PBD::warning << string_compose (_("Cannot read WAV files in %1: %2"), folder, e.what ()) << endmsg;
+	}
+
+	std::sort (paths.begin (), paths.end ());
+	return paths;
+}
+
 int
 ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder)
 {
@@ -846,6 +883,18 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 
 	set_session (new_session);
 
+	if (recording_folder) {
+		if (meta_session) {
+			meta_session_setup (session_template.substr (11));
+		}
+
+		const vector<string> wavs = recording_folder_wavs (Glib::path_get_dirname (path));
+		if (!wavs.empty ()) {
+			Temporal::timepos_t start (new_session->current_start_sample ());
+			PublicEditor::instance ().do_embed (wavs, Editing::ImportDistinctFiles, Editing::ImportAsTrack, false, start);
+		}
+	}
+
 	const int saved = new_session->save_state (recording_folder ? snap_name : new_session->name ());
 
 #ifndef PLATFORM_WINDOWS
@@ -862,7 +911,7 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 	(void) saved;
 #endif
 
-	if (meta_session) {
+	if (meta_session && !recording_folder) {
 		meta_session_setup (session_template.substr (11));
 	}
 
