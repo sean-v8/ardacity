@@ -1125,7 +1125,7 @@ AudioClock::set_out_of_bounds (bool negative)
 }
 
 void
-AudioClock::print_minsec_samples (samplepos_t samples, char* buf, size_t size, samplecnt_t rate)
+AudioClock::print_minsec_samples (samplepos_t samples, char* buf, size_t size, ARDOUR::samplecnt_t rate)
 {
 	const bool negative = samples < 0;
 	const uint64_t magnitude = negative ? uint64_t (0) - uint64_t (samples) : uint64_t (samples);

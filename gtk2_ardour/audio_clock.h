@@ -102,7 +102,7 @@ public:
 	 */
 	void set_scale (double x, double y);
 
-	static void print_minsec_samples (samplepos_t, char*, size_t, samplecnt_t);
+	static void print_minsec_samples (samplepos_t, char*, size_t, ARDOUR::samplecnt_t);
 	static void print_minsec (samplepos_t, char* buf, size_t bufsize, float sample_rate, int decimals = 3);
 
 	sigc::signal<void> ValueChanged;
