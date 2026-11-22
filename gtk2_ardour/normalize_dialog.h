@@ -94,4 +94,5 @@ private:
 	Gtk::SpinButton* _ceiling;
 	Gtk::Table* _settings;
 	Gtk::ProgressBar* _progress;
+	int64_t _analysis_started;
 };

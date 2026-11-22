@@ -62,7 +62,7 @@ AnalysisGraph::analyze_region (std::shared_ptr<AudioRegion> region, bool raw)
 }
 
 void
-AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progress* p)
+AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progress* p, bool spectrum)
 {
 	int n_channels = region->n_channels();
 	if (n_channels == 0 || n_channels > _max_chunksize) {
@@ -77,7 +77,7 @@ AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progres
 				_session->nominal_sample_rate(),
 				n_channels,
 				n_samples,
-				region->length_samples()));
+				region->length_samples(), 800, spectrum ? 200 : 0));
 	interleaver->add_output(chunker);
 	chunker->add_output (analyser);
 

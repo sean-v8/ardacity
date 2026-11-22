@@ -19,6 +19,13 @@
  */
 
 #include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <sstream>
+
+#include <glib.h>
+
+#include "pbd/compose.h"
 
 #include <ytkmm/comboboxtext.h>
 #include <ytkmm/label.h>
@@ -294,6 +301,7 @@ NormalizeTargetDialog::start_analysis ()
 {
 	_settings->set_sensitive (false);
 	set_response_sensitive (RESPONSE_ACCEPT, false);
+	_analysis_started = g_get_monotonic_time ();
 	_progress->show ();
 	set_progress (0);
 }
@@ -324,5 +332,15 @@ NormalizeTargetDialog::on_hide ()
 void
 NormalizeTargetDialog::update_progress_gui (float fraction)
 {
+	const double elapsed = (g_get_monotonic_time () - _analysis_started) / 1000000.0;
 	_progress->set_fraction (std::min (1.f, fraction));
+
+	if (fraction <= 0.f || elapsed < 1.0) {
+		_progress->set_text (_("Analyzing…"));
+	} else {
+		const int64_t seconds = std::ceil (elapsed * (1.0 - std::min (1.f, fraction)) / fraction);
+		std::ostringstream remaining;
+		remaining << seconds / 60 << ':' << std::setfill ('0') << std::setw (2) << seconds % 60;
+		_progress->set_text (string_compose (_("About %1 remaining"), remaining.str ()));
+	}
 }

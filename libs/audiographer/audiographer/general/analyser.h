@@ -29,6 +29,7 @@ namespace AudioGrapher
 class LIBAUDIOGRAPHER_API Analyser : public LoudnessReader
 {
   public:
+	/* Pass zero spectrum bins when only waveform and meter data are needed. */
 	Analyser (float sample_rate, unsigned int channels, samplecnt_t bufsize, samplecnt_t n_samples, size_t width = 800, size_t bins = 200);
 	~Analyser ();
 	void process (ProcessContext<float> const & c);

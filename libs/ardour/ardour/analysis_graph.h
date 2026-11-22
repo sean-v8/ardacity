@@ -47,7 +47,7 @@ class LIBARDOUR_API AnalysisGraph {
 		AnalysisGraph (ARDOUR::Session*);
 		~AnalysisGraph ();
 
-		void analyze_region (ARDOUR::AudioRegion const*, bool raw = false, PBD::Progress* = 0);
+		void analyze_region (ARDOUR::AudioRegion const*, bool raw = false, PBD::Progress* = 0, bool spectrum = true);
 		void analyze_region (std::shared_ptr<ARDOUR::AudioRegion>, bool raw = false);
 
 		void analyze_range (std::shared_ptr<ARDOUR::Route>, std::shared_ptr<ARDOUR::AudioPlaylist>, const std::list<TimelineRange>&);

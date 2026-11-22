@@ -96,7 +96,7 @@ class LIBARDOUR_API AudioRegion : public Region, public AudioReadable
 	 */
 	double rms (PBD::Progress* p = 0) const;
 
-	bool loudness (float& tp, float& i, float& s, float& m, PBD::Progress* p = 0) const;
+	bool loudness (float& tp, float& i, float& s, float& m, PBD::Progress* p = 0, bool spectrum = true) const;
 
 	bool envelope_active () const { return _envelope_active; }
 	bool fade_in_active ()  const { return _fade_in_active; }

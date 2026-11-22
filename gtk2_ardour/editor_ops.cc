@@ -5725,7 +5725,7 @@ Editor::normalize_region_to_target (bool loudness)
 
 		if (loudness) {
 			float true_peak, integrated, short_term, momentary;
-			if (region->loudness (true_peak, integrated, short_term, momentary, &dialog)
+			if (region->loudness (true_peak, integrated, short_term, momentary, &dialog, false)
 			    && std::isfinite (integrated) && integrated > -180.f
 			    && std::isfinite (true_peak) && true_peak > 0.f) {
 				gain_t const requested = dB_to_coefficient (target - integrated);

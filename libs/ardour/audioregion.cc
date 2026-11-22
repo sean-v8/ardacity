@@ -1955,13 +1955,13 @@ AudioRegion::rms (Progress* p) const
 }
 
 bool
-AudioRegion::loudness (float& tp, float& i, float& s, float& m, Progress* p) const
+AudioRegion::loudness (float& tp, float& i, float& s, float& m, Progress* p, bool spectrum) const
 {
 	ARDOUR::AnalysisGraph ag (&_session);
 	tp = i = s = m = -200;
 
 	ag.set_total_samples (length_samples());
-	ag.analyze_region (this, true, p);
+	ag.analyze_region (this, true, p, spectrum);
 
 	if (p && p->cancelled ()) {
 		return false;
