@@ -910,7 +910,7 @@ WaveView::optimal_image_width_samples () const
 	const double cairo_image_limit = 32766.0;
 	const double max_image_width = cairo_image_limit / max_multiplier;
 
-	samplecnt_t max_width_samples = floor (max_image_width / _props->samples_per_pixel);
+	samplecnt_t max_width_samples = floor (max_image_width * _props->samples_per_pixel);
 
 	const samplecnt_t one_tenth_of_second_limited = std::min (one_tenth_of_second, max_width_samples);
 
