@@ -25,6 +25,7 @@
 namespace ARDOUR_COMMAND_LINE {
 
 extern std::string session_name;
+extern std::string new_session_folder;
 extern bool        show_key_actions;
 extern bool        show_actions;
 extern bool        no_splash;

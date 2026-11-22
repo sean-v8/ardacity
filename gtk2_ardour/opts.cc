@@ -31,6 +31,8 @@
 #include <iostream>
 #include <cstdlib>
 
+#include <glib.h>
+
 #include "ardour/debug.h"
 #include "ardour/session.h"
 
@@ -45,6 +47,7 @@
 using namespace std;
 
 string ARDOUR_COMMAND_LINE::session_name = "";
+string ARDOUR_COMMAND_LINE::new_session_folder;
 string ARDOUR_COMMAND_LINE::backend_client_name = PBD::downcase(PROGRAM_NAME);
 bool  ARDOUR_COMMAND_LINE::show_key_actions = false;
 bool  ARDOUR_COMMAND_LINE::show_actions = false;
@@ -86,6 +89,9 @@ print_help (const char *execname)
 		<< _("  -m, --menus file            Use \"file\" to define menus\n")
 		<< _("  -n, --no-splash             Do not show splash screen\n")
 		<< _("  -N, --new <session-name>    Create a new session from the command line\n")
+#ifndef PLATFORM_WINDOWS
+		<< _("      --new-session-in-folder <folder>  Open New Session for an existing folder\n")
+#endif
 		<< _("  -O, --no-hw-optimizations   Disable h/w specific optimizations\n")
 		<< _("  -P, --no-connect-ports      Do not connect any ports at startup\n")
 		<< _("  -s, --no-strobe             Avoid \"strobe-like\" effects in GUI\n")
@@ -111,6 +117,9 @@ ARDOUR_COMMAND_LINE::parse_opts (int argc, char *argv[])
 		execname++;
 	}
 
+#ifndef PLATFORM_WINDOWS
+	const int new_session_in_folder_option = 256;
+#endif
 	const struct option longopts[] = {
 		{ "version", 0, 0, 'v' },
 		{ "help", 0, 0, 'h' },
@@ -124,6 +133,9 @@ ARDOUR_COMMAND_LINE::parse_opts (int argc, char *argv[])
 		{ "menus", 1, 0, 'm' },
 		{ "name", 1, 0, 'c' },
 		{ "new", 1, 0, 'N' },
+#ifndef PLATFORM_WINDOWS
+		{ "new-session-in-folder", 1, 0, new_session_in_folder_option },
+#endif
 		{ "no-hw-optimizations", 0, 0, 'O' },
 		{ "sync", 0, 0, 'S' },
 		{ "template", 1, 0, 'T' },
@@ -213,6 +225,16 @@ ARDOUR_COMMAND_LINE::parse_opts (int argc, char *argv[])
 			session_name = optarg;
 			break;
 
+#ifndef PLATFORM_WINDOWS
+		case new_session_in_folder_option:
+			if (!g_file_test (optarg, G_FILE_TEST_IS_DIR)) {
+				cerr << string_compose (_("Not an existing folder: %1"), optarg) << endl;
+				return 1;
+			}
+			new_session_folder = optarg;
+			break;
+#endif
+
 		case 'O':
 			try_hw_optimization = false;
 			break;
@@ -232,6 +254,11 @@ ARDOUR_COMMAND_LINE::parse_opts (int argc, char *argv[])
 		default:
 			return print_help(execname);
 		}
+	}
+
+	if (!new_session_folder.empty () && (new_session || optind < argc)) {
+		cerr << _("--new-session-in-folder cannot be combined with --new or a session path.") << endl;
+		return 1;
 	}
 
 	if (optind < argc) {

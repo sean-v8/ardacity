@@ -515,6 +515,18 @@ SessionDialog::use_recording_folder () const
 }
 
 bool
+SessionDialog::select_recording_folder (const std::string& folder)
+{
+	if (!new_folder_chooser.set_filename (PBD::canonical_path (folder))) {
+		return false;
+	}
+
+	_use_recording_folder.set_active (true);
+	suggest_recording_folder_name ();
+	return true;
+}
+
+bool
 SessionDialog::validate_recording_folder (const std::string& folder, const std::string& name)
 {
 	const std::string problem = ARDOUR::recording_session_creation_error (folder, name);

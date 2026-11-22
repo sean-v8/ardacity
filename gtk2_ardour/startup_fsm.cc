@@ -439,7 +439,13 @@ void
 StartupFSM::show_session_dialog (bool new_session_required)
 {
 	set_state (WaitingForSessionPath);
-	session_dialog = new SessionDialog (new_session_required ? SessionDialog::New : SessionDialog::Recent, session_name, session_path, session_template, false);
+	const std::string& folder = ARDOUR_COMMAND_LINE::new_session_folder;
+	const bool show_new = new_session_required || !folder.empty ();
+	session_dialog = new SessionDialog (show_new ? SessionDialog::New : SessionDialog::Recent, session_name, session_path, session_template, false);
+	if (!folder.empty () && !session_dialog->select_recording_folder (folder)) {
+		ArdourMessageDialog msg (*session_dialog, string_compose (_("Could not select folder %1. Choose a folder to continue."), folder));
+		msg.run ();
+	}
 	current_dialog_connection = session_dialog->signal_response().connect (sigc::bind (sigc::mem_fun (*this, &StartupFSM::dialog_response_handler), NewSessionDialog));
 	session_dialog->set_position (WIN_POS_CENTER);
 	session_dialog->present ();
