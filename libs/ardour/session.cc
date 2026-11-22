@@ -39,6 +39,8 @@
 #include <limits.h>
 #include <regex>
 
+#include <boost/scope_exit.hpp>
+
 #include <giomm.h>
 
 #include <glibmm/datetime.h>
@@ -61,6 +63,7 @@
 #include "temporal/types_convert.h"
 
 #include "ardour/amp.h"
+#include "ardour/panner_shell.h"
 #include "ardour/analyser.h"
 #include "ardour/async_midi_port.h"
 #include "ardour/audio_buffer.h"
@@ -5430,10 +5433,10 @@ Session::audio_source_name_is_unique (const string& name)
 }
 
 string
-Session::format_audio_source_name (const string& legalized_base, uint32_t nchan, uint32_t chan, bool take_required, uint32_t cnt, bool related_exists)
+Session::format_audio_source_name (const string& legalized_base, uint32_t nchan, uint32_t chan, bool take_required, uint32_t cnt, bool related_exists, bool render)
 {
 	ostringstream sstr;
-	const string ext = native_header_format_extension (config.get_native_file_header_format(), DataType::AUDIO);
+	const string ext = native_header_format_extension (render ? RF64 : config.get_native_file_header_format(), DataType::AUDIO);
 
 	sstr << legalized_base;
 
@@ -5466,7 +5469,7 @@ Session::format_audio_source_name (const string& legalized_base, uint32_t nchan,
 
 /** Return a unique name based on \a base for a new internal audio source */
 string
-Session::new_audio_source_path (const string& base, uint32_t nchan, uint32_t chan, bool take_required)
+Session::new_audio_source_path (const string& base, uint32_t nchan, uint32_t chan, bool take_required, bool render)
 {
 	uint32_t cnt;
 	string possible_name;
@@ -5480,7 +5483,7 @@ Session::new_audio_source_path (const string& base, uint32_t nchan, uint32_t cha
 
 	for (cnt = 1; cnt <= limit; ++cnt) {
 
-		possible_name = format_audio_source_name (legalized, nchan, chan, take_required, cnt, some_related_source_name_exists);
+		possible_name = format_audio_source_name (legalized, nchan, chan, take_required, cnt, some_related_source_name_exists, render);
 
 		if (audio_source_name_is_unique (possible_name)) {
 			break;
@@ -6755,6 +6758,193 @@ Session::write_one_track (Track& track, samplepos_t start, samplepos_t end,
 	unblock_processing ();
 
 	return result;
+}
+
+std::shared_ptr<Region>
+Session::render_track_mix (AudioTrackList const& tracks, samplepos_t start, samplepos_t end, uint32_t channels,
+                           std::string const& name, std::vector<std::shared_ptr<Source>>& sources, InterThreadInfo& status)
+{
+	if (tracks.empty () || end <= start || (channels != 1 && channels != 2)) {
+		return nullptr;
+	}
+
+	struct Input {
+		std::shared_ptr<AudioTrack> track;
+		ChanCount streams;
+		samplecnt_t latency;
+	};
+
+	std::vector<Input> inputs;
+	inputs.reserve (tracks.size ());
+	ChanCount capacity;
+	for (auto const& track : tracks) {
+		auto const streams = track->max_processor_streams ();
+		inputs.push_back ({ track, streams, 0 });
+		capacity = ChanCount::max (capacity, streams);
+	}
+
+	BufferSet work;
+	BufferSet stereo;
+	BufferSet sum;
+	for (DataType::iterator type = DataType::begin (); type != DataType::end (); ++type) {
+		work.ensure_buffers (*type, capacity.get (*type), bounce_chunk_size);
+	}
+	stereo.ensure_buffers (DataType::AUDIO, 2, bounce_chunk_size);
+	stereo.set_count (ChanCount (DataType::AUDIO, 2));
+	sum.ensure_buffers (DataType::AUDIO, channels, bounce_chunk_size);
+	sum.set_count (ChanCount (DataType::AUDIO, channels));
+
+	bool keep_sources = false;
+	BOOST_SCOPE_EXIT_ALL (&) {
+		if (!keep_sources) {
+			for (auto const& source : sources) {
+				source->mark_for_remove ();
+			}
+			sources.clear ();
+		}
+	};
+
+	std::vector<std::shared_ptr<AudioFileSource>> files;
+	files.reserve (channels);
+	sources.reserve (channels);
+	for (uint32_t channel = 0; channel < channels; ++channel) {
+		auto const path = new_audio_source_path (name, channels, channel, false, true);
+		if (path.empty ()) {
+			return nullptr;
+		}
+		auto source = SourceFactory::createWritableAudio (*this, path, sample_rate (), FormatFloat, RF64, false, false);
+		sources.push_back (source);
+		auto audio = std::dynamic_pointer_cast<AudioFileSource> (source);
+		files.push_back (audio);
+		audio->prepare_for_peakfile_writes ();
+	}
+
+	{
+		block_processing ();
+		_bounce_processing_active = true;
+		size_t configured = 0;
+		bool have_buffers = false;
+		BOOST_SCOPE_EXIT_ALL (&) {
+			_bounce_processing_active = false;
+			if (have_buffers) {
+				_engine.main_thread ()->drop_buffers ();
+			}
+			for (size_t i = 0; i < configured; ++i) {
+				auto& track = *inputs[i].track;
+				track.set_block_size (get_block_size ());
+				track.flush_processors ();
+			}
+			unblock_processing ();
+		};
+
+		for (auto& input : inputs) {
+			auto& track = *input.track;
+			++configured;
+			track.set_block_size (bounce_chunk_size);
+			track.flush_processors ();
+			track.amp ()->reset_gain ();
+			track.trim ()->reset_gain ();
+			input.latency = track.bounce_get_latency (track.main_outs (), false, false, false);
+		}
+		_engine.main_thread ()->get_buffers ();
+		have_buffers = true;
+
+		MidiNoteTracker notes;
+		auto process = [&] (Input const& input, samplepos_t position, samplecnt_t frames) {
+			work.set_count (input.streams);
+			auto& track = *input.track;
+			if (position < end) {
+				return track.export_stuff (work, position, frames, track.main_outs (), false, false, false, notes) == 0;
+			}
+
+			/* Recover the delayed end of the recording without reading beyond it. */
+			work.silence (frames, 0);
+			track.bounce_process (work, position, frames, track.main_outs (), false, false, false);
+			return true;
+		};
+
+		/* Advance each input by its own latency before any samples reach the mix. */
+		for (auto const& input : inputs) {
+			for (samplecnt_t skipped = 0; skipped < input.latency && !status.cancel;) {
+				samplepos_t const position = start + skipped;
+				samplecnt_t frames = std::min (bounce_chunk_size, input.latency - skipped);
+				if (position < end) {
+					frames = std::min (frames, end - position);
+				}
+				if (!process (input, position, frames)) {
+					return nullptr;
+				}
+				skipped += frames;
+			}
+		}
+
+		for (samplepos_t position = start; position < end && !status.cancel;) {
+			samplecnt_t frames = std::min (bounce_chunk_size, end - position);
+			for (auto const& input : inputs) {
+				samplecnt_t const remaining_input = end - position - input.latency;
+				if (remaining_input > 0) {
+					frames = std::min (frames, remaining_input);
+				}
+			}
+			sum.silence (frames, 0);
+
+			for (auto const& input : inputs) {
+				if (status.cancel || !process (input, position + input.latency, frames)) {
+					return nullptr;
+				}
+
+				/* Use the existing panner at the latency-compensated timeline
+				 * position, without delivering audio to live output ports.
+				 */
+				auto pan = input.track->main_outs ()->panner_shell ();
+				BufferSet* audio = &work;
+				if (channels == 2 && pan && !pan->bypassed () && pan->panner () && input.track->main_outs ()->output_streams ().n_audio () == 2) {
+					pan->run (work, stereo, position, position + frames, frames);
+					audio = &stereo;
+				}
+
+				uint32_t const count = audio->count ().n_audio ();
+				if (count == 0 || count > channels) {
+					return nullptr;
+				}
+				for (uint32_t channel = 0; channel < channels; ++channel) {
+					sum.get_audio (channel).accumulate_from (audio->get_audio (channel % count), frames);
+				}
+			}
+
+			for (uint32_t channel = 0; channel < channels; ++channel) {
+				if (files[channel]->write (sum.get_audio (channel).data (), frames) != frames) {
+					return nullptr;
+				}
+			}
+
+			position += frames;
+			status.progress = double (position - start) / (end - start);
+		}
+	}
+
+	if (status.cancel) {
+		return nullptr;
+	}
+
+	time_t now = time (nullptr);
+	struct tm* stamp = localtime (&now);
+	for (auto const& audio : files) {
+		if (audio->update_header (start, *stamp, now) < 0) {
+			return nullptr;
+		}
+		audio->mark_immutable ();
+		audio->done_with_peakfile_writes ();
+	}
+
+	PropertyList properties;
+	properties.add (Properties::name, name);
+	properties.add (Properties::start, timepos_t (0));
+	properties.add (Properties::length, timecnt_t (end - start));
+	properties.add (Properties::whole_file, true);
+	auto region = RegionFactory::create (sources, properties, false);
+	keep_sources = bool (region);
+	return region;
 }
 
 gain_t*

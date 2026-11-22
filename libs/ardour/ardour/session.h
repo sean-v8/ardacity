@@ -285,9 +285,9 @@ public:
 	std::string construct_peak_filepath (const std::string& audio_path, const bool in_session = false, const bool old_peak_name = false) const;
 
 	bool audio_source_name_is_unique (const std::string& name);
-	std::string format_audio_source_name (const std::string& legalized_base, uint32_t nchan, uint32_t chan, bool take_required, uint32_t cnt, bool related_exists);
+	std::string format_audio_source_name (const std::string& legalized_base, uint32_t nchan, uint32_t chan, bool take_required, uint32_t cnt, bool related_exists, bool render = false);
 	std::string new_audio_source_path_for_embedded (const std::string& existing_path);
-	std::string new_audio_source_path (const std::string&, uint32_t nchans, uint32_t chan, bool take_required);
+	std::string new_audio_source_path (const std::string&, uint32_t nchans, uint32_t chan, bool take_required, bool render = false);
 	std::string new_midi_source_path (const std::string&, bool need_source_lock = true);
 
 	/** create a new track or bus from a template (XML path)
@@ -1046,6 +1046,10 @@ public:
 	                                         std::shared_ptr<Processor> endpoint,
 	                                         bool include_endpoint, bool for_export, bool for_freeze,
 	                                         std::string const& source_name = "", std::string const& region_name = "");
+	std::shared_ptr<Region> render_track_mix (AudioTrackList const&, samplepos_t, samplepos_t, uint32_t,
+	                                          std::string const&, std::vector<std::shared_ptr<Source>>&, InterThreadInfo&);
+	void add_render_mix_command (RouteList const&, std::shared_ptr<AudioTrack> const&);
+	PBD::Command* render_command_factory (XMLNode&);
 	int freeze_all (InterThreadInfo&);
 
 	/* session-wide solo/mute/rec-enable */

@@ -49,6 +49,7 @@ public:
 
 	void run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double speed, pframes_t nframes, bool);
 
+	void reset_gain ();
 	void set_gain_automation_buffer (gain_t *);
 
 	void setup_gain_automation (samplepos_t start_sample, samplepos_t end_sample, samplecnt_t nframes);

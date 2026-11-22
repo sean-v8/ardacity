@@ -437,7 +437,7 @@ write_midi_type0_data_to_one_file (Evoral::SMF* source, ImportStatus& status, si
 			written++;
 
 			if (status.progress < 0.99) {
-				status.progress += 0.01;
+				status.progress.store (status.progress.load () + 0.01);
 			}
 		}
 
@@ -574,7 +574,7 @@ write_midi_type1_data_to_one_file (Evoral::SMF* source, ImportStatus& status, st
 				}
 
 				if (status.progress < 0.99) {
-					status.progress += 0.01;
+					status.progress.store (status.progress.load () + 0.01);
 				}
 			}
 
@@ -659,7 +659,7 @@ write_midi_type1_data_to_one_file (Evoral::SMF* source, ImportStatus& status, st
 				}
 
 				if (status.progress < 0.99) {
-					status.progress += 0.01;
+					status.progress.store (status.progress.load () + 0.01);
 				}
 			}
 

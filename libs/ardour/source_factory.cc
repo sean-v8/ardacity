@@ -332,31 +332,31 @@ SourceFactory::createExternal (DataType type, Session& s, const string& path,
 }
 
 std::shared_ptr<Source>
+SourceFactory::createWritableAudio (Session& s, const std::string& path, samplecnt_t rate, SampleFormat format,
+                                    HeaderFormat header, bool announce, bool defer_peaks)
+{
+	std::shared_ptr<Source> ret (new SndFileSource (s, path, string (), format, header, rate, SndFileSource::default_writable_flags));
+	BOOST_MARK_SOURCE (ret);
+
+	if (setup_peakfile (ret, defer_peaks)) {
+		throw failed_constructor ();
+	}
+
+	if (announce) {
+		SourceCreated (ret);
+	}
+
+	return ret;
+}
+
+std::shared_ptr<Source>
 SourceFactory::createWritable (DataType type, Session& s, const std::string& path,
                                samplecnt_t rate, bool announce, bool defer_peaks)
 {
 	/* this might throw failed_constructor(), which is OK */
 
 	if (type == DataType::AUDIO) {
-		Source*                   src = new SndFileSource (s, path, string (),
-                                                 s.config.get_native_file_data_format (),
-                                                 s.config.get_native_file_header_format (),
-                                                 rate,
-                                                 SndFileSource::default_writable_flags);
-		std::shared_ptr<Source> ret (src);
-		BOOST_MARK_SOURCE (ret);
-
-		if (setup_peakfile (ret, defer_peaks)) {
-			throw failed_constructor ();
-		}
-
-		// no analysis data - this is a new file
-
-		if (announce) {
-			SourceCreated (ret);
-		}
-		return ret;
-
+		return createWritableAudio (s, path, rate, s.config.get_native_file_data_format (), s.config.get_native_file_header_format (), announce, defer_peaks);
 	} else if (type == DataType::MIDI) {
 		// XXX writable flags should belong to MidiSource too
 		try {

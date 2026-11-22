@@ -1942,6 +1942,7 @@ private:
 	bool write_region (std::string path, std::shared_ptr<ARDOUR::AudioRegion>);
 	void bounce_region_selection (bool with_processing);
 	void bounce_range_selection (BounceTarget, bool enable_processing);
+	void render_selected_tracks (bool replace);
 	void external_edit_region ();
 
 	int write_audio_selection (TimeSelection&);

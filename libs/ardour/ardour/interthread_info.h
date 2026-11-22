@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <pthread.h>
 
 #include "ardour/libardour_visibility.h"
@@ -30,9 +31,14 @@ namespace ARDOUR {
 	public:
 		InterThreadInfo () : done (false), cancel (false), progress (0), thread () {}
 
-		volatile bool  done;
-		volatile bool  cancel;
-		volatile float progress;
+		bool get_done () const { return done.load (); }
+		bool set_done (bool value) { done.store (value); return true; }
+		float get_progress () const { return progress.load (); }
+		bool set_progress (float value) { progress.store (value); return true; }
+
+		std::atomic<bool> done;
+		std::atomic<bool> cancel;
+		std::atomic<float> progress;
 		pthread_t      thread;
 		ProcessThread  process_thread;
 	};

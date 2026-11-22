@@ -428,6 +428,14 @@ Amp::setup_gain_automation (samplepos_t start_sample, samplepos_t end_sample, sa
 	}
 }
 
+void
+Amp::reset_gain ()
+{
+	_current_gain = _gain_control->get_value ();
+	_current_automation_sample = INT64_MAX;
+	_apply_gain_automation = false;
+}
+
 bool
 Amp::visible() const
 {

@@ -30,11 +30,13 @@
 
 /* Note: public Editor methods are documented in public_editor.h */
 
+#include <chrono>
 #include <cstdlib>
 #include <cmath>
 #include <string>
 #include <map>
 #include <set>
+#include <thread>
 
 #include <ytkmm/messagedialog.h>
 
@@ -63,7 +65,15 @@
 #include "ardour/boost_debug.h"
 #include "ardour/clip_library.h"
 #include "ardour/dB.h"
+#include "ardour/gain_control.h"
+#include "ardour/internal_send.h"
 #include "ardour/location.h"
+#include "ardour/mute_control.h"
+#include "ardour/pannable.h"
+#include "ardour/panner_shell.h"
+#include "ardour/port.h"
+#include "ardour/plugin_insert.h"
+#include "ardour/port_insert.h"
 #include "ardour/midi_region.h"
 #include "ardour/midi_track.h"
 #include "ardour/operations.h"
@@ -4042,6 +4052,252 @@ Editor::freeze_route ()
 
 	pthread_join (itt.thread, 0);
 	current_interthread_info = 0;
+}
+
+void
+Editor::render_selected_tracks (bool replace)
+{
+	if (!_session || !_session->writable ()) {
+		return;
+	}
+
+	Session& session = *_session;
+	std::string const title = replace ? _("Render and Replace Tracks") : _("Render to New Track");
+	auto show_error = [&title] (std::string const& message) {
+		ArdourMessageDialog dialog (message);
+		dialog.set_title (title);
+		dialog.run ();
+	};
+
+	if (!session.engine ().running () || !session.transport_stopped () || session.transport_locating () || session.get_record_enabled ()) {
+		show_error (_("Start the audio engine, stop the transport and disable session recording before rendering tracks."));
+		return;
+	}
+	if (session.get_play_loop ()) {
+		show_error (_("Disable loop playback before rendering tracks."));
+		return;
+	}
+	if (replace && (session.soloing () || session.listening ())) {
+		show_error (_("Clear solo and listen before replacing tracks."));
+		return;
+	}
+
+	auto master = session.master_out ();
+	AudioTrackList tracks;
+	samplepos_t start = Temporal::max_samplepos;
+	samplepos_t end = 0;
+	uint32_t channels = 1;
+
+	for (auto view : selection->tracks) {
+		auto route_view = dynamic_cast<RouteTimeAxisView*> (view);
+		auto track = route_view ? std::dynamic_pointer_cast<AudioTrack> (route_view->track ()) : nullptr;
+		if (!track || !track->playlist ()) {
+			continue;
+		}
+
+		auto output = track->main_outs ();
+		auto pan = output->panner_shell ();
+		std::string reason;
+		auto rendered = track->render_output_streams ();
+		if (!track->active () || track->freeze_state () == Track::Frozen || track->disk_io_point () != DiskIOPreFader) {
+			reason = _("Render requires an active, unfrozen track with its disk I/O at the pre-fader position.");
+		} else if (track->triggerbox () && (!track->triggerbox ()->empty () || track->triggerbox ()->armed ())) {
+			reason = _("Render requires a track without cue clips or an armed cue slot.");
+		} else if (track->gain_control ()->automation_write () || track->trim_control ()->automation_write () ||
+		           (pan && pan->pannable () && pan->pannable ()->automation_write ())) {
+			reason = _("Turn off writing track automation before rendering.");
+		} else if (rendered.n_audio () < 1 || rendered.n_audio () > 2 || output->output_streams ().n_audio () > 2) {
+			reason = _("Rendering supports mono and stereo processing chains.");
+		}
+
+		if (rendered.n_audio () == 2 || track->n_channels ().n_audio () == 2) {
+			channels = 2;
+		}
+		if (pan && !pan->bypassed () && pan->panner () && output->output_streams ().n_audio () == 2) {
+			auto panner = pan->pannable ();
+			if (std::abs (panner->pan_azimuth_control->get_value () - 0.5) > 1e-9 ||
+			    (panner->automation_playback () && !panner->pan_azimuth_control->alist ()->empty ())) {
+				channels = 2;
+			}
+		}
+
+		auto monitor_send = track->monitor_send ();
+		track->foreach_processor ([&] (std::weak_ptr<Processor> const& weak) {
+			auto processor = weak.lock ();
+			if (!processor || !processor->active () || processor == output || processor == monitor_send) {
+				return;
+			}
+			if (auto plugin = std::dynamic_pointer_cast<PluginInsert> (processor)) {
+				if (plugin->has_sidechain () && plugin->sidechain_input () && plugin->sidechain_input ()->connected ()) {
+					reason = _("Disconnect external sidechains before rendering this track.");
+				}
+			} else if (std::dynamic_pointer_cast<PortInsert> (processor)) {
+				reason = _("Bypass external inserts before rendering this track.");
+			} else if (replace && processor->does_routing ()) {
+				reason = _("Use Render to New Track for tracks with active sends.");
+			}
+		});
+
+		if (replace) {
+			/* Removing a destination route would drop sends from other
+			 * routes. Only replace tracks feeding the master directly.
+			 */
+			bool direct = master && track->n_outputs () == master->n_inputs ();
+			for (uint32_t channel = 0; direct && channel < track->n_outputs ().n_audio (); ++channel) {
+				auto port = track->output ()->nth (channel);
+				auto destination = master->input ()->nth (channel);
+				std::vector<std::string> connections;
+				direct = port && destination && port->get_connections (connections) == 1 && port->connected_to (destination.get ());
+			}
+			if (!direct || track->internal_return () || track->n_outputs ().n_midi () || track->mute_control ()->muted_by_self_or_masters ()) {
+				reason = _("Replacement requires unmuted tracks routed directly to the master, with no return or MIDI output.");
+			} else if (track->route_group () || track->slaved ()) {
+				reason = _("Use Render to New Track for grouped tracks or tracks assigned to a VCA.");
+			}
+		}
+
+		if (!reason.empty ()) {
+			show_error (string_compose (_("%1: %2"), track->name (), reason));
+			return;
+		}
+
+		if (!track->playlist ()->empty ()) {
+			auto extent = track->playlist ()->get_extent ();
+			start = std::min (start, extent.first.samples ());
+			end = std::max (end, extent.second.samples ());
+		}
+		tracks.push_back (track);
+	}
+
+	if (tracks.empty () || start >= end) {
+		show_error (_("Select one or more audio tracks with playlist regions."));
+		return;
+	}
+	tracks.sort ([] (std::shared_ptr<AudioTrack> const& a, std::shared_ptr<AudioTrack> const& b) {
+		return a->presentation_info ().order () < b->presentation_info ().order ();
+	});
+
+	std::string const name = tracks.size () == 1 ? string_compose (_("%1 Render"), tracks.front ()->name ()) : _("Rendered Mix");
+	std::shared_ptr<Region> result;
+	std::vector<std::shared_ptr<Source>> sources;
+	InterThreadInfo status;
+
+	Gtk::Dialog progress (title, true);
+	progress.set_default_size (440, -1);
+	progress.set_border_width (12);
+	progress.get_vbox ()->set_spacing (8);
+	Gtk::ProgressBar bar;
+	progress.get_vbox ()->pack_start (bar, false, false);
+	auto cancel = progress.add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
+	auto request_cancel = [&] () {
+		status.cancel = true;
+		cancel->set_sensitive (false);
+		bar.set_text (_("Cancelling render…"));
+	};
+	progress.signal_delete_event ().connect ([&] (GdkEventAny*) {
+		request_cancel ();
+		return true;
+	});
+	progress.signal_response ().connect ([&] (int response) {
+		if (response == Gtk::RESPONSE_CANCEL || response == Gtk::RESPONSE_DELETE_EVENT) {
+			request_cancel ();
+		}
+	});
+
+	auto const started = std::chrono::steady_clock::now ();
+	auto update = [&] () {
+		if (status.cancel) {
+			return true;
+		}
+		double const fraction = status.progress.load ();
+		int const elapsed = std::chrono::duration_cast<std::chrono::seconds> (std::chrono::steady_clock::now () - started).count ();
+		bar.set_fraction (fraction);
+		if (elapsed >= 2 && fraction > 0.0) {
+			int const remaining = std::min (86400.0, elapsed * (1.0 - fraction) / fraction);
+			bar.set_text (string_compose (_("%1%% · About %2 min %3 sec remaining"), int (fraction * 100), remaining / 60, remaining % 60));
+		} else {
+			bar.set_text (string_compose (_("%1%%"), int (fraction * 100)));
+		}
+		return true;
+	};
+
+	update ();
+	progress.show_all ();
+	auto timer = Glib::signal_timeout ().connect (update, 100);
+	std::thread worker;
+	try {
+		worker = std::thread ([&] () {
+			try {
+				TempoMap::SharedPtr tmap (TempoMap::fetch ());
+				SessionEvent::create_per_thread_pool ("track render events", 64);
+				result = session.render_track_mix (tracks, start, end, channels, name, sources, status);
+			} catch (std::exception const& e) {
+				PBD::error << e.what () << endmsg;
+			} catch (...) {
+				PBD::error << _("Rendering failed.") << endmsg;
+			}
+			status.done = true;
+		});
+	} catch (std::system_error const& e) {
+		PBD::error << e.what () << endmsg;
+	}
+	if (worker.joinable ()) {
+		while (!status.done) {
+			gtk_main_iteration ();
+		}
+		worker.join ();
+	}
+	timer.disconnect ();
+	progress.hide ();
+
+	AudioTrackList destination;
+	if (result && !status.cancel) {
+		uint32_t const outputs = master ? master->n_inputs ().n_audio () : channels;
+		destination = session.new_audio_track (channels, outputs ? outputs : channels, nullptr, 1, name,
+		                                       PresentationInfo::max_order, Normal, false);
+	}
+	if (destination.empty ()) {
+		for (auto const& source : sources) {
+			source->mark_for_remove ();
+		}
+		if (!status.cancel) {
+			show_error (_("Rendering could not be completed. The original tracks were preserved."));
+		}
+		return;
+	}
+
+	auto mix = destination.front ();
+	mix->set_time_domain (AudioTime);
+	if (channels == 2 && mix->n_outputs ().n_audio () == 2) {
+		mix->main_outs ()->panner_shell ()->set_bypassed (true);
+	}
+	if (!replace) {
+		mix->mute_control ()->set_value_unchecked (1.0);
+	}
+
+	begin_reversible_command (title);
+	for (auto const& source : sources) {
+		session.add_source (source);
+	}
+	RegionFactory::map_add (result);
+	RegionFactory::CheckNewRegion (result);
+
+	PropertyList properties;
+	properties.add (Properties::whole_file, false);
+	auto region = std::dynamic_pointer_cast<AudioRegion> (RegionFactory::create (result, properties));
+	region->set_fade_in_active (false);
+	region->set_fade_out_active (false);
+	mix->playlist ()->add_region (region, timepos_t (start));
+
+	auto originals = std::make_shared<RouteList> ();
+	if (replace) {
+		originals->assign (tracks.begin (), tracks.end ());
+	}
+	session.add_render_mix_command (*originals, mix);
+	if (replace) {
+		session.remove_routes (originals);
+	}
+	commit_reversible_command ();
 }
 
 void
