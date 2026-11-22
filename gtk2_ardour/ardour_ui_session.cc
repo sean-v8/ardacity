@@ -767,10 +767,9 @@ recording_folder_wavs (const string& folder)
 
 #ifndef PLATFORM_WINDOWS
 static void
-prepare_recording_folder_export (const std::string& parent)
+prepare_recording_folder_export (const std::string& parent, const std::string& session_name)
 {
-	const std::string basename = Glib::path_get_basename (parent);
-	const std::string folder = Glib::build_filename (parent, basename);
+	const std::string folder = Glib::build_filename (parent, session_name);
 
 	if (g_mkdir (folder.c_str (), 0755) != 0 &&
 	    (errno != EEXIST || !Glib::file_test (folder, Glib::FILE_TEST_IS_DIR) ||
@@ -779,7 +778,7 @@ prepare_recording_folder_export (const std::string& parent)
 		return;
 	}
 
-	const std::string notes = Glib::build_filename (folder, basename + ".txt");
+	const std::string notes = Glib::build_filename (folder, session_name + ".txt");
 	const int fd = g_open (notes.c_str (), O_WRONLY | O_CREAT | O_EXCL, 0666);
 	if (fd >= 0) {
 		close (fd);
@@ -951,7 +950,7 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 			ArdourMessageDialog msg (string_compose (_("Could not create session link \"%1\": %2. The session was saved in \"%3\"."), visible_link, g_strerror (errno), path));
 			msg.run ();
 		} else {
-			prepare_recording_folder_export (Glib::path_get_dirname (path));
+			prepare_recording_folder_export (Glib::path_get_dirname (path), snap_name);
 		}
 	}
 #else
