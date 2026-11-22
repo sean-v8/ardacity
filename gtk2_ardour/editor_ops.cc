@@ -50,6 +50,8 @@
 
 #include "temporal/tempo.h"
 
+#include "canvas/canvas.h"
+
 #include "gtkmm2ext/string_completion.h"
 #include "gtkmm2ext/utils.h"
 
@@ -1491,6 +1493,21 @@ Editor::scroll_playhead (bool forward)
 }
 
 void
+Editor::step_playhead_sample (bool forward)
+{
+	if (!_session || _session->transport_rolling () || _session->actively_recording ()) {
+		return;
+	}
+
+	const samplepos_t pos = _session->transport_sample ();
+	if ((forward && pos == max_samplepos) || (!forward && pos <= 0)) {
+		return;
+	}
+
+	_session->request_locate (forward ? pos + 1 : pos - 1, false, MustStop);
+}
+
+void
 Editor::cursor_align (bool playhead_to_edit)
 {
 	if (!_session) {
@@ -1897,9 +1914,9 @@ Editor::get_selection_extents (timepos_t &start, timepos_t &end) const
 }
 
 bool
-Editor::choose_new_marker_name(string &name, bool is_range) {
+Editor::choose_new_marker_name(string &name, bool is_range, bool force_prompt) {
 
-	if (!UIConfiguration::instance().get_name_new_markers()) {
+	if (!force_prompt && !UIConfiguration::instance().get_name_new_markers()) {
 		/* don't prompt user for a new name */
 		return true;
 	}
@@ -1972,18 +1989,23 @@ Editor::add_location_from_selection ()
 void
 Editor::add_location_mark_with_flag (timepos_t const & where, Location::Flags flags, int32_t cue_id)
 {
+	add_location_mark_internal (where, flags, cue_id, false);
+}
+
+void
+Editor::add_location_mark_internal (timepos_t const & where, Location::Flags flags, int32_t cue_id, bool prompt_for_name)
+{
 	if (!_session) {
 		return;
 	}
 
-	if (_session->locations()->mark_at (where, timecnt_t (1), flags)) {
+	const timecnt_t slop = prompt_for_name ? timecnt_t (0) : timecnt_t (1);
+	if (_session->locations()->mark_at (where, slop, flags)) {
 		return;
 	}
 
 	string markername;
 	string namebase;
-
-	select_new_marker = true;
 
 	if (flags & Location::IsCueMarker) {
 		/* XXX i18n needed for cue letter names */
@@ -1998,9 +2020,13 @@ Editor::add_location_mark_with_flag (timepos_t const & where, Location::Flags fl
 
 	_session->locations()->next_available_name(markername, namebase);
 
+	if (prompt_for_name && !choose_new_marker_name (markername, false, true)) {
+		return;
+	}
+
 	Location *location = new Location (*_session, where, where, markername, flags, cue_id);
 
-	if (UIConfiguration::instance().get_name_new_markers()) {
+	if (!prompt_for_name && UIConfiguration::instance().get_name_new_markers()) {
 		if (!edit_location (*location, true, false)) {
 			delete location;
 			return;
@@ -2010,6 +2036,7 @@ Editor::add_location_mark_with_flag (timepos_t const & where, Location::Flags fl
 	begin_reversible_command (_("add marker"));
 
 	XMLNode &before = _session->locations()->get_state();
+	select_new_marker = true;
 	_session->locations()->add (location, true);
 	XMLNode &after = _session->locations()->get_state();
 	_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
@@ -2085,6 +2112,17 @@ Editor::add_location_from_playhead_cursor ()
 	if (_session) {
 		add_location_mark (timepos_t (_session->audible_sample()));
 	}
+}
+
+void
+Editor::add_named_location_from_playhead ()
+{
+	if (!_session || _session->transport_rolling () || _session->actively_recording ()) {
+		return;
+	}
+
+	add_location_mark_internal (timepos_t (_session->transport_sample ()), Location::IsMark, 0, true);
+	_track_canvas->grab_focus ();
 }
 
 bool
@@ -2216,7 +2254,7 @@ Editor::jump_forward_to_mark_flagged (Location::Flags whitelist, Location::Flags
 		return;
 	}
 
-	timepos_t pos = _session->locations()->first_mark_after_flagged (timepos_t (_session->transport_sample()+1), true, whitelist, blacklist, equalist);
+	timepos_t pos = _session->locations()->first_mark_after_flagged (timepos_t (_session->transport_sample()), true, whitelist, blacklist, equalist);
 
 	if (pos == timepos_t::max (Temporal::AudioTime)) {
 		return;

@@ -674,7 +674,7 @@ private:
 	void mouse_add_new_range (Temporal::timepos_t);
 	void mouse_add_new_loop (Temporal::timepos_t);
 	void mouse_add_new_punch (Temporal::timepos_t);
-	bool choose_new_marker_name(std::string &name, bool is_range=false);
+	bool choose_new_marker_name(std::string &name, bool is_range=false, bool force_prompt=false);
 	void update_marker_display ();
 	void ensure_marker_updated (LocationMarkers* lam, ARDOUR::Location* location);
 	void update_all_marker_lanes ();
@@ -1371,6 +1371,10 @@ private:
 	void unhide_markers ();
 	void unhide_ranges ();
 	void cursor_align (bool playhead_to_edit);
+	void step_playhead_sample (bool forward);
+	ARDOUR::Location* selected_location_mark ();
+	void rename_selected_location_mark ();
+	void move_selected_location_mark_to_playhead ();
 	void toggle_skip_playback ();
 
 	void remove_last_capture ();
@@ -1411,6 +1415,8 @@ private:
 
 	void toggle_location_at_playhead_cursor ();
 	void add_location_from_playhead_cursor ();
+	void add_named_location_from_playhead ();
+	void add_location_mark_internal (Temporal::timepos_t const &, ARDOUR::Location::Flags, int32_t cue_id, bool prompt_for_name);
 	bool do_remove_location_at_playhead_cursor ();
 	void remove_location_at_playhead_cursor ();
 	bool select_new_marker;
