@@ -18,6 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <algorithm>
+
 #include <cmath>
 
 #include <cairomm/cairomm.h>
@@ -67,7 +69,7 @@ double WaveView::_global_gradient_depth = 0.6;
 bool WaveView::_global_logscaled = false;
 WaveView::Shape WaveView::_global_shape = WaveView::Normal;
 bool WaveView::_global_show_waveform_clipping = true;
-double WaveView::_global_clip_level = 0.98853;
+double WaveView::_global_clip_level = 1.0;
 
 PBD::Signal<void()> WaveView::VisualPropertiesChanged;
 PBD::Signal<void()> WaveView::ClipLevelChanged;
@@ -491,23 +493,18 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 
 	std::unique_ptr<LineTips[]> tips (new LineTips[n_peaks]);
 
-	/* Clip level nominally set to -0.9dBFS to account for inter-sample
-	   interpolation possibly clipping (value may be too low).
+	/* Peaks already include region gain. Undo only display magnification
+	 * when comparing them with the configured waveform clip threshold.
+	 */
+	const double clip_level = _global_clip_level * req->image->props.amplitude_above_axis;
 
-	   We adjust by the region's own gain (but note: not by any gain
-	   automation or its gain envelope) so that clip indicators are closer
-	   to providing data about on-disk data. This multiplication is
-	   needed because the data we get from AudioRegion::read_peaks()
-	   has been scaled by scale_amplitude() already.
-	*/
-
-	const double clip_level = _global_clip_level * fabs (req->image->props.amplitude);
-
-	const Shape shape = req->image->props.shape;
-	const bool logscaled = req->image->props.logscaled;
+	const auto& props = req->image->props;
+	const bool custom_range = props.has_waveform_range ();
+	const Shape shape = custom_range ? WaveView::Normal : props.shape;
+	const bool logscaled = !custom_range && props.logscaled;
 	const bool envelope_active = req->image->props.envelope_active;
 
-	if (req->image->props.shape == WaveView::Rectified) {
+	if (shape == WaveView::Rectified) {
 
 		/* each peak is a line from the bottom of the waveview
 		 * to a point determined by max (peaks[i].max,
@@ -540,7 +537,7 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 				const double p = max(fabs (peaks[i].max * env), fabs (peaks[i].min * env));
 				tips[i].top = y_extent (p, shape, height);
 				tips[i].spread = p * height;
-				if (p >= clip_level) {
+				if (max (fabs (peaks[i].max), fabs (peaks[i].min)) >= clip_level) {
 					tips[i].clip_max = true;
 				}
 			}
@@ -694,7 +691,16 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 		outline_context->stroke ();
 
 	} else {
-		const int height_zero = floor ((height - 1) * .5);
+		const double center = floor ((height - 1) * .5);
+		const double height_zero = props.waveform_y (0, center);
+		if (custom_range) {
+			for (int i = 0; i < n_peaks; ++i) {
+				const double gain = envelope_active ? envelope[i] : 1.0;
+				tips[i].top = props.waveform_y (peaks[i].max * gain, center);
+				tips[i].bot = props.waveform_y (peaks[i].min * gain, center);
+				tips[i].spread = tips[i].bot - tips[i].top;
+			}
+		}
 
 		for (int i = 0; i < n_peaks; ++i) {
 
@@ -814,6 +820,26 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 
 	context->mask (images.wave, 0, 0);
 	context->fill ();
+
+	if (req->image->props.samples_per_pixel > 1.0) {
+		auto rms_mask = Cairo::ImageSurface::create (Cairo::FORMAT_A8, n_peaks, height);
+		auto rms_context = Cairo::Context::create (rms_mask);
+		const double center = shape == Rectified ? height - 1 : floor ((height - 1) * 0.5);
+		for (int i = 0; i < n_peaks; ++i) {
+			double rms = peaks[i].rms * (envelope_active ? fabs (envelope[i]) : 1.0);
+			if (logscaled && rms > 0) {
+				rms = alt_log_meter (fast_coefficient_to_dB (rms));
+			}
+			const double top = std::max ({0.0, props.waveform_y (rms, center * (shape == Rectified ? 0.5 : 1.0)), double (tips[i].top)});
+			const double bottom = std::min ((shape == Rectified ? center : props.waveform_y (-rms, center)), double (tips[i].bot));
+			if (bottom > top) {
+				rms_context->rectangle (i, top, 1, bottom - top);
+			}
+		}
+		rms_context->fill ();
+		context->set_source_rgba (1.0, 1.0, 1.0, 0.28);
+		context->mask (rms_mask, 0, 0);
+	}
 
 	set_source_rgba (context, req->image->props.outline_color);
 	context->mask (images.outline, 0, 0);
@@ -943,9 +969,9 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 
 		auto image = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, n_peaks, props.height);
 		auto context = Cairo::Context::create (image);
-		const bool rectified = props.shape == WaveView::Rectified;
-		const double zero = rectified ? props.height - 0.5 : props.height * 0.5;
-		const double extent = rectified ? props.height - 1.0 : zero - 0.5;
+		const bool rectified = !props.has_waveform_range () && props.shape == WaveView::Rectified;
+		const double center = floor ((props.height - 1) * 0.5);
+		const double zero = rectified ? props.height - 0.5 : props.waveform_y (0, center);
 		if (props.show_zero && !rectified) {
 			set_source_rgba (context, props.zero_color);
 			context->set_line_width (1.0);
@@ -958,20 +984,22 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 		const double radius = std::min (2.0, 0.35 / props.samples_per_pixel);
 		context->set_line_width (1.0);
 		for (samplecnt_t i = 0; i < read; ++i) {
+			const double region_sample = samples[i] * props.amplitude;
+			const bool clipped = _global_show_waveform_clipping && std::abs (region_sample) >= _global_clip_level;
 			double value = samples[i] * display_gain * (envelope.empty () ? 1.0 : envelope[i]);
-			if (props.logscaled) {
+			if (!props.has_waveform_range () && props.logscaled) {
 				value = std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (value))), value);
 			}
 			if (rectified) {
 				value = std::abs (value);
 			}
 			const double x = i / props.samples_per_pixel + 0.5;
-			const double y = zero - extent * std::max (-1.0, std::min (1.0, value));
+			const double y = rectified ? zero - (props.height - 1.0) * value : props.waveform_y (value, center);
 			set_source_rgba (context, props.fill_color);
 			context->move_to (x, zero);
 			context->line_to (x, y);
 			context->stroke ();
-			set_source_rgba (context, props.outline_color);
+			set_source_rgba (context, clipped ? props.clip_color : props.outline_color);
 			context->arc (x, y, radius, 0.0, 2.0 * M_PI);
 			context->fill ();
 		}
@@ -1036,6 +1064,7 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 			for (samplecnt_t i = 0; i < n_peaks; ++i) {
 				peaks[i].max *= amplitude_above_axis;
 				peaks[i].min *= amplitude_above_axis;
+				peaks[i].rms *= amplitude_above_axis;
 			}
 		}
 
@@ -1387,6 +1416,17 @@ WaveView::set_shape (Shape s)
 	if (_props->shape != s) {
 		begin_visual_change ();
 		_props->shape = s;
+		end_visual_change ();
+	}
+}
+
+void
+WaveView::set_waveform_range (double low, double high)
+{
+	if (_props->waveform_low != low || _props->waveform_high != high) {
+		begin_visual_change ();
+		_props->waveform_low = low;
+		_props->waveform_high = high;
 		end_visual_change ();
 	}
 }

@@ -49,6 +49,14 @@ public: // member variables
 	double                samples_per_pixel;
 	double                amplitude;
 	double                amplitude_above_axis;
+	double                waveform_low = -1.0;
+	double                waveform_high = 1.0;
+
+	bool has_waveform_range () const { return waveform_low != -1.0 || waveform_high != 1.0; }
+	double waveform_y (double value, double center) const
+	{
+		return 2 * center * (waveform_high - value) / (waveform_high - waveform_low);
+	}
 	Gtkmm2ext::Color      fill_color;
 	Gtkmm2ext::Color      outline_color;
 	Gtkmm2ext::Color      zero_color;
@@ -154,6 +162,7 @@ public: // methods
 		return (samples_per_pixel == other.samples_per_pixel &&
 		        contains (other.sample_start, other.sample_end) && channel == other.channel &&
 		        height == other.height && amplitude == other.amplitude &&
+		        waveform_low == other.waveform_low && waveform_high == other.waveform_high &&
 		        amplitude_above_axis == other.amplitude_above_axis && fill_color == other.fill_color &&
 		        outline_color == other.outline_color && zero_color == other.zero_color &&
 		        clip_color == other.clip_color && show_zero == other.show_zero &&

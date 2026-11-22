@@ -595,11 +595,13 @@ AudioRegion::read_peaks (PeakData *buf, samplecnt_t npeaks, samplecnt_t offset, 
 			const float tmp = buf[n].max;
 			buf[n].max = _scale_amplitude * buf[n].min;
 			buf[n].min = _scale_amplitude * tmp;
+			buf[n].rms *= -_scale_amplitude;
 		}
 	} else if (_scale_amplitude != 1.0f) {
 		for (samplecnt_t n = 0; n < npeaks; ++n) {
 			buf[n].max *= _scale_amplitude;
 			buf[n].min *= _scale_amplitude;
+			buf[n].rms *= _scale_amplitude;
 		}
 	}
 

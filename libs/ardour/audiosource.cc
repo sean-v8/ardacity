@@ -377,6 +377,16 @@ AudioSource::write (Sample const * src, samplecnt_t cnt)
 	return write_unlocked (src, cnt);
 }
 
+static Sample
+waveform_rms (const Sample* samples, samplecnt_t count)
+{
+	double energy = 0;
+	for (samplecnt_t i = 0; i < count; ++i) {
+		energy += double (samples[i]) * samples[i];
+	}
+	return count ? std::sqrt (energy / count) : 0;
+}
+
 int
 AudioSource::read_peaks (PeakData *peaks, samplecnt_t npeaks, samplepos_t start, samplecnt_t cnt, double samples_per_visual_peak) const
 {
@@ -408,6 +418,7 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 				break;
 			}
 			peaks[peak].min = peaks[peak].max = buf[0];
+			peaks[peak].rms = waveform_rms (buf.get(), samples_read);
 			find_peaks (buf.get(), samples_read, &peaks[peak].min, &peaks[peak].max);
 
 			start += samples_read;
@@ -420,6 +431,7 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 			samplecnt_t val = (start + samples_read / 2) % 24000;
 
 			peaks[peak].min = peaks[peak].max = .5 - val / 24000.0;
+			peaks[peak].rms = std::abs (peaks[peak].max);
 
 			start += samples_read;
 			cnt -= samples_read;
@@ -427,7 +439,7 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 		}
 #endif
 		while (peak < npeaks) {
-			peaks[peak].min = peaks[peak].max = 0;
+			peaks[peak] = {};
 			++peak;
 		}
 		return 0;
@@ -530,6 +542,7 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 		for (samplecnt_t i = 0; i < npeaks; ++i) {
 			peaks[i].max = raw_staging[i];
 			peaks[i].min = raw_staging[i];
+			peaks[i].rms = std::abs (raw_staging[i]);
 		}
 
 		return 0;
@@ -704,17 +717,24 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 
 					xmax = -1.0;
 					xmin = 1.0;
+					double energy = 0;
+					samplecnt_t weight = 0;
 
 					while ((current_stored_peak <= stored_peak_before_next_visual_peak) && (i < chunksize)) {
 
 						xmax = max (xmax, staging[i].max);
 						xmin = min (xmin, staging[i].min);
+						const samplecnt_t block = std::max<samplecnt_t> (0, std::min (
+							samples_per_file_peak, _length.samples() - current_stored_peak * samples_per_file_peak));
+						energy += double (staging[i].rms) * staging[i].rms * block;
+						weight += block;
 						++i;
 						++current_stored_peak;
 					}
 
 					peak_cache[nvisual_peaks].max = xmax;
 					peak_cache[nvisual_peaks].min = xmin;
+					peak_cache[nvisual_peaks].rms = weight ? std::sqrt (energy / weight) : 0;
 					++nvisual_peaks;
 					next_visual_peak_sample = min ((double) start + cnt, (next_visual_peak_sample + samples_per_visual_peak));
 					stored_peak_before_next_visual_peak = (uint32_t) next_visual_peak_sample / samples_per_file_peak;
@@ -779,6 +799,8 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 		xmin = 1.0;
 		xmax = -1.0;
 
+		double energy = 0;
+		samplecnt_t weight = 0;
 		while (nvisual_peaks < read_npeaks) {
 
 			if (i == samples_read) {
@@ -814,6 +836,8 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 
 			xmax = max (xmax, raw_staging[i]);
 			xmin = min (xmin, raw_staging[i]);
+			energy += double (raw_staging[i]) * raw_staging[i];
+			++weight;
 			++i;
 			++current_sample;
 			pixel_pos += pixels_per_sample;
@@ -822,6 +846,9 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 
 				peaks[nvisual_peaks].max = xmax;
 				peaks[nvisual_peaks].min = xmin;
+				peaks[nvisual_peaks].rms = std::sqrt (energy / weight);
+				energy = 0;
+				weight = 0;
 				++nvisual_peaks;
 				xmin = 1.0;
 				xmax = -1.0;
@@ -1011,6 +1038,8 @@ AudioSource::compute_and_write_peaks (Sample const * buf, samplecnt_t first_samp
 
 			x.min = peak_leftovers[0];
 			x.max = peak_leftovers[0];
+			find_peaks (peak_leftovers, peak_leftover_cnt, &x.min, &x.max);
+			x.rms = waveform_rms (peak_leftovers, peak_leftover_cnt);
 
 			off_t byte = (peak_leftover_sample / fpp) * sizeof (PeakData);
 
@@ -1109,6 +1138,7 @@ AudioSource::compute_and_write_peaks (Sample const * buf, samplecnt_t first_samp
 
 		ARDOUR::find_peaks (buf+1, this_time-1, &peakbuf[peaks_computed].min, &peakbuf[peaks_computed].max);
 
+		peakbuf[peaks_computed].rms = waveform_rms (buf, this_time);
 		peaks_computed++;
 		buf += this_time;
 		to_do -= this_time;

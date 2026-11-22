@@ -197,7 +197,7 @@ AudioPlaylistSource::sample_rate () const
 int
 AudioPlaylistSource::setup_peakfile ()
 {
-	_peak_path = Glib::build_filename (_session.session_directory().peak_path(), name() + ARDOUR::peakfile_suffix);
+	_peak_path = Glib::build_filename (_session.session_directory().peak_path(), name() + "-rms1" + ARDOUR::peakfile_suffix);
 	return initialize_peakfile (string());
 }
 

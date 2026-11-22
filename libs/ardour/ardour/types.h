@@ -642,6 +642,7 @@ struct PeakData {
 
 	PeakDatum min;
 	PeakDatum max;
+	PeakDatum rms;
 };
 
 enum RunContext {

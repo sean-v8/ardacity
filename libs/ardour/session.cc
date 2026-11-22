@@ -5255,9 +5255,9 @@ static string
 peak_file_helper (const string& peak_path, const string& file_path, const string& file_base, bool hash) {
 	if (hash) {
 		std::string checksum = Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_SHA1, file_path + G_DIR_SEPARATOR + file_base);
-		return Glib::build_filename (peak_path, checksum + peakfile_suffix);
+		return Glib::build_filename (peak_path, checksum + "-rms1" + peakfile_suffix);
 	} else {
-		return Glib::build_filename (peak_path, file_base + peakfile_suffix);
+		return Glib::build_filename (peak_path, file_base + "-rms1" + peakfile_suffix);
 	}
 }
 
