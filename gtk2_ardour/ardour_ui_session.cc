@@ -1032,6 +1032,13 @@ ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string 
 			if (previous_tracks) {
 				normalize_newly_imported_tracks (*new_session, *previous_tracks, *import_peak);
 			}
+
+			/* Fit the session after GTK has allocated the editor canvas. */
+			Glib::signal_idle ().connect_once ([this, new_session] () {
+				if (_session == new_session) {
+					PublicEditor::instance ().access_action ("Editor", "zoom-to-session");
+				}
+			});
 		}
 	}
 
