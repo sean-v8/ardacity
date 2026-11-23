@@ -3295,24 +3295,21 @@ EditingContext::temporal_zoom_step_scale (bool zoom_out, double scale)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
-	ENSURE_GUI_THREAD (*this, &EditingContext::temporal_zoom_step, zoom_out, scale)
+	ENSURE_GUI_THREAD (*this, &EditingContext::temporal_zoom_step_scale, zoom_out, scale)
 
 	if (_track_canvas_width <= 0) {
 		return;
 	}
 
-	double nspp = samples_per_pixel;
-
-	if (zoom_out) {
-		nspp *= scale;
-		if (nspp == samples_per_pixel) {
-			nspp *= 2.0;
-		}
-	} else {
-		nspp /= scale;
-		if (nspp == samples_per_pixel) {
-			nspp /= 2.0;
-		}
+	/* Repeat events can arrive before the next canvas update. Accumulate
+	 * them against the requested zoom so the intermediate scales need not
+	 * be rendered and the queued key presses still count.
+	 */
+	const double base = (pending_visual_change.pending & VisualChange::ZoomLevel)
+		? pending_visual_change.samples_per_pixel : samples_per_pixel;
+	double nspp = zoom_out ? base * scale : base / scale;
+	if (nspp == base) {
+		nspp = zoom_out ? base * 2.0 : base / 2.0;
 	}
 
 	//zoom-behavior-tweaks
@@ -3335,8 +3332,12 @@ EditingContext::temporal_zoom (double spp)
 		return;
 	}
 
-	const samplepos_t current_page = std::max<samplepos_t> (1, current_page_samples());
-	samplepos_t current_leftmost = _leftmost_sample;
+	const bool zoom_pending = pending_visual_change.pending & VisualChange::ZoomLevel;
+	const double base = zoom_pending ? pending_visual_change.samples_per_pixel : samples_per_pixel;
+	const samplepos_t current_page = std::max<samplepos_t> (1, zoom_pending
+		? static_cast<samplepos_t> (_track_canvas_width * base) : current_page_samples());
+	const samplepos_t current_leftmost = (pending_visual_change.pending & VisualChange::TimeOrigin)
+		? pending_visual_change.time_origin : _leftmost_sample;
 	samplepos_t current_rightmost;
 	samplepos_t current_center;
 	samplepos_t new_page_size;
@@ -3348,10 +3349,6 @@ EditingContext::temporal_zoom (double spp)
 	double nspp;
 	double l;
 
-	if (spp == samples_per_pixel) {
-		return;
-	}
-
 	// Imposing an arbitrary limit to zoom out as too much zoom out produces
 	// segfaults for lack of memory. If somebody decides this is not high enough I
 	// believe it can be raisen to higher values but some limit must be in place.
@@ -3361,7 +3358,7 @@ EditingContext::temporal_zoom (double spp)
 	// would be 4147200000 samples, so 2592000 samples per pixel.
 
 	nspp = std::max (minimum_samples_per_pixel, std::min (spp, 2592000.0));
-	if (nspp == samples_per_pixel) {
+	if (nspp == base) {
 		return;
 	}
 
@@ -3376,7 +3373,7 @@ EditingContext::temporal_zoom (double spp)
 		break;
 
 	case ZoomFocusRight:
-		current_rightmost = _leftmost_sample + current_page;
+		current_rightmost = current_leftmost + current_page;
 		if (current_rightmost < new_page_size) {
 			leftmost_after_zoom = 0;
 		} else {
@@ -3417,7 +3414,11 @@ EditingContext::temporal_zoom (double spp)
 
 		if (use_mouse_sample) {
 
-			l = - ((new_page_size * ((where - current_leftmost)/(double)current_page)) - where);
+			/* Mouse coordinates describe the displayed canvas, even if a
+			 * previous key or wheel step has queued a different viewport.
+			 */
+			const samplepos_t displayed_page = std::max<samplepos_t> (1, current_page_samples());
+			l = where - new_page_size * ((where - _leftmost_sample) / double (displayed_page));
 
 			if (l < 0) {
 				leftmost_after_zoom = 0;
