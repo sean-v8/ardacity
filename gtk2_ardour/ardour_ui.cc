@@ -3099,7 +3099,7 @@ ARDOUR_UI::setup_toplevel_window (Gtk::Window& window, const string& name, void*
 		window.set_default_icon_list (window_icons);
 	}
 
-	Gtkmm2ext::WindowTitle title (Glib::get_application_name());
+	Gtkmm2ext::WindowTitle title ("Ardacity");
 
 	if (!name.empty()) {
 		title += name;
