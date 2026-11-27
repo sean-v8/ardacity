@@ -43,6 +43,7 @@ public: // ctors
 public: // member variables
 
 	samplepos_t            region_start;
+	ARDOUR::sampleoffset_t timeline_offset = 0;
 	samplepos_t            region_end;
 	uint16_t              channel;
 	double                height;
@@ -160,6 +161,7 @@ public: // methods
 	bool is_equivalent (WaveViewProperties const& other)
 	{
 		return (samples_per_pixel == other.samples_per_pixel &&
+		        (samples_per_pixel >= 1.0 || timeline_offset == other.timeline_offset) &&
 		        contains (other.sample_start, other.sample_end) && channel == other.channel &&
 		        height == other.height && amplitude == other.amplitude &&
 		        waveform_low == other.waveform_low && waveform_high == other.waveform_high &&

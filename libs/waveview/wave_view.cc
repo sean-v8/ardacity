@@ -266,6 +266,7 @@ WaveView::prepare_for_render (Rect const& area) const
 	double const image_end_pixel_offset = draw_rect.x1 - self_rect.x0;
 
 	WaveViewProperties required_props = *_props;
+	required_props.timeline_offset = _region->position().samples() - required_props.region_start;
 
 	required_props.set_sample_positions_from_pixel_offsets (image_start_pixel_offset,
 	                                                        image_end_pixel_offset);
@@ -988,7 +989,9 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 		}
 
 		const double display_gain = props.amplitude * props.amplitude_above_axis;
-		const double radius = std::min (2.0, 0.35 / props.samples_per_pixel);
+		const samplepos_t first_sample = props.get_sample_start () + props.timeline_offset;
+		const double first_pixel = std::round (first_sample / props.samples_per_pixel);
+		const double radius = std::min (3.0, std::max (1.0, 0.35 / props.samples_per_pixel));
 		context->set_line_width (1.0);
 		for (samplecnt_t i = 0; i < read; ++i) {
 			const double region_sample = samples[i] * props.amplitude;
@@ -1000,7 +1003,7 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 			if (rectified) {
 				value = std::abs (value);
 			}
-			const double x = i / props.samples_per_pixel + 0.5;
+			const double x = std::round ((first_sample + i) / props.samples_per_pixel) - first_pixel + 0.5;
 			const double y = rectified ? zero - (props.height - 1.0) * value : props.waveform_y (value, center);
 			set_source_rgba (context, props.fill_color);
 			context->move_to (x, zero);
@@ -1136,6 +1139,7 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	}
 
 	WaveViewProperties required_props = *_props;
+	required_props.timeline_offset = _region->position().samples() - required_props.region_start;
 
 	required_props.set_sample_positions_from_pixel_offsets (image_start_pixel_offset,
 	                                                        image_end_pixel_offset);
@@ -1242,6 +1246,11 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	 */
 
 	double image_origin_in_self_coordinates = (image_to_draw->props.get_sample_start () - _props->region_start + region_view_dx) / samples_per_pixel;
+	if (samples_per_pixel < 1.0) {
+		const samplepos_t first_sample = image_to_draw->props.get_sample_start () + image_to_draw->props.timeline_offset;
+		image_origin_in_self_coordinates = std::round (first_sample / samples_per_pixel)
+		                                   - std::round (region_position / samples_per_pixel);
+	}
 
 	/* the image may only be a best-effort ... it may not span the entire
 	 * range requested, though it is guaranteed to cover the start. So
