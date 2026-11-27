@@ -62,8 +62,7 @@ SelectionMemento::set_state (const XMLNode& node, int /*version*/) {
 
 	float zoom;
 	if (node.get_property ("zoom", zoom)) {
-		/* older versions of ardour used floating point samples_per_pixel */
-		editor.reset_zoom (llrintf (zoom));
+		editor.reset_zoom (zoom);
 	}
 
 	samplepos_t pos;

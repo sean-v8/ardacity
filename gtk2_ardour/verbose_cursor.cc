@@ -122,6 +122,10 @@ VerboseCursor::set_time (samplepos_t sample)
 		snprintf (buf, sizeof (buf), "%s", Timecode::timecode_format_time (timecode).c_str());
 		break;
 
+	case AudioClock::MinSecSamples:
+		AudioClock::print_minsec_samples (sample, buf, sizeof (buf), _editor.session()->sample_rate());
+		break;
+
 	case AudioClock::MinSec:
 		AudioClock::print_minsec (sample, buf, sizeof (buf), _editor.session()->sample_rate());
 		break;
@@ -193,6 +197,10 @@ VerboseCursor::set_duration (samplepos_t start, samplepos_t end)
 	case AudioClock::Timecode:
 		_editor.session()->timecode_duration (end - start, timecode);
 		snprintf (buf, sizeof (buf), "%s", Timecode::timecode_format_time (timecode).c_str());
+		break;
+
+	case AudioClock::MinSecSamples:
+		AudioClock::print_minsec_samples (end - start, buf, sizeof (buf), _editor.session()->sample_rate());
 		break;
 
 	case AudioClock::MinSec:

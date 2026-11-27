@@ -49,6 +49,14 @@ public: // member variables
 	double                samples_per_pixel;
 	double                amplitude;
 	double                amplitude_above_axis;
+	double                waveform_low = -1.0;
+	double                waveform_high = 1.0;
+
+	bool has_waveform_range () const { return waveform_low != -1.0 || waveform_high != 1.0; }
+	double waveform_y (double value, double center) const
+	{
+		return 2 * center * (waveform_high - value) / (waveform_high - waveform_low);
+	}
 	Gtkmm2ext::Color      fill_color;
 	Gtkmm2ext::Color      outline_color;
 	Gtkmm2ext::Color      zero_color;
@@ -80,7 +88,7 @@ public: // methods
 		assert (width_samples != 0);
 		ARDOUR::samplecnt_t half_width = width_samples / 2;
 		samplepos_t new_sample_start = std::max (region_start, get_center_sample () - half_width);
-		samplepos_t new_sample_end = std::min (get_center_sample () + half_width, region_end);
+		samplepos_t new_sample_end = std::min (get_center_sample () + (width_samples - half_width), region_end);
 		assert (new_sample_start <= new_sample_end);
 		sample_start = new_sample_start;
 		sample_end = new_sample_end;
@@ -134,7 +142,7 @@ public: // methods
 		 * so we have to do bounds checking/adjustment for this in set_sample_offsets.
 		 */
 		samplepos_t new_sample_start = region_start + (start_pixel * samples_per_pixel);
-		samplepos_t new_sample_end = region_start + (end_pixel * samples_per_pixel);
+		samplepos_t new_sample_end = region_start + std::ceil (end_pixel * samples_per_pixel);
 		set_sample_offsets (new_sample_start, new_sample_end);
 	}
 
@@ -154,6 +162,7 @@ public: // methods
 		return (samples_per_pixel == other.samples_per_pixel &&
 		        contains (other.sample_start, other.sample_end) && channel == other.channel &&
 		        height == other.height && amplitude == other.amplitude &&
+		        waveform_low == other.waveform_low && waveform_high == other.waveform_high &&
 		        amplitude_above_axis == other.amplitude_above_axis && fill_color == other.fill_color &&
 		        outline_color == other.outline_color && zero_color == other.zero_color &&
 		        clip_color == other.clip_color && show_zero == other.show_zero &&

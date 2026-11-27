@@ -130,7 +130,7 @@ class Pianoroll : public CueEditor, public SlipDraggable
 	std::shared_ptr<ARDOUR::Region> region() const { return _region; }
 
 	double max_extents_scale() const { return 1.2; }
-	void set_samples_per_pixel (samplecnt_t);
+	void set_samples_per_pixel (double);
 
 	void midi_action (void (MidiView::*method)());
 	void midi_action (void (PianorollMidiView::*method)());

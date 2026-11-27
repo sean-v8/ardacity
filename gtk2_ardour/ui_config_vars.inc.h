@@ -118,7 +118,7 @@ UI_CONFIG_VARIABLE (bool, show_toolbar_cuectrl, "show-toolbar-cuectrl", false)
 UI_CONFIG_VARIABLE (bool, show_toolbar_monitor_info, "show-toolbar-monitor-info", false)
 UI_CONFIG_VARIABLE (bool, show_mini_timeline, "show-mini-timeline", false)
 UI_CONFIG_VARIABLE (bool, show_secondary_clock, "show-secondary-clock", true)
-UI_CONFIG_VARIABLE (double, waveform_clip_level, "waveform-clip-level", -0.0933967) /* units of dB */
+UI_CONFIG_VARIABLE (double, waveform_clip_level, "waveform-clip-level", 0.0) /* units of dB */
 UI_CONFIG_VARIABLE (bool, buggy_gradients, "buggy-gradients", false)
 UI_CONFIG_VARIABLE (bool, cairo_image_surface, "cairo-image-surface", false)
 UI_CONFIG_VARIABLE (uint64_t, waveform_cache_size, "waveform-cache-size", 100) /* units of megagbytes */

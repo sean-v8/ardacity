@@ -295,7 +295,7 @@ CueEditor::set_zoom_focus (Editing::ZoomFocus zf)
 }
 
 void
-CueEditor::set_samples_per_pixel (samplecnt_t n)
+CueEditor::set_samples_per_pixel (double n)
 {
 	EC_LOCAL_TEMPO_SCOPE;
 
@@ -303,7 +303,7 @@ CueEditor::set_samples_per_pixel (samplecnt_t n)
 	ZoomChanged(); /* EMIT SIGNAL */
 }
 
-samplecnt_t
+double
 CueEditor::get_current_zoom () const
 {
 	EC_LOCAL_TEMPO_SCOPE;

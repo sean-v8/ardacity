@@ -26,6 +26,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <algorithm>
 #include <cstdio> // for sprintf
 #include <cmath>
 
@@ -291,7 +292,13 @@ AudioClock::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 	}
 
 	if (editing) {
-		if (!insert_map.empty()) {
+		if (sample_edit_digit >= 0) {
+			const Pango::Rectangle cursor = _layout->get_cursor_strong_pos (sample_edit_digit);
+			cairo_set_source_rgba (cr, cursor_r, cursor_g, cursor_b, cursor_a);
+			cairo_rectangle (cr, (get_width() - lw) / 2.0 + cursor.get_x() * xscale / PANGO_SCALE,
+			                 (get_height() - lh) / 2.0, 2.0, cursor.get_height() * yscale / PANGO_SCALE);
+			cairo_fill (cr);
+		} else if (!insert_map.empty()) {
 
 			int xcenter = (get_width() - layout_width) /2;
 
@@ -359,7 +366,9 @@ AudioClock::set_clock_dimensions (Gtk::Requisition& req)
 	tmp->set_font_description (font);
 
 	/* this string is the longest thing we will ever display */
-	if (_mode == MinSec)
+	if (_mode == MinSecSamples)
+		tmp->set_text (" 88:88:88+888888");
+	else if (_mode == MinSec)
 		tmp->set_text (" 88:88:88,888 ");
 	else
 		tmp->set_text (" 88:88:88,88 ");
@@ -403,11 +412,24 @@ AudioClock::show_edit_status (int length)
 }
 
 void
-AudioClock::start_edit (Field f)
+AudioClock::start_edit (Field f, int digit)
 {
 	if (!editing) {
 		pre_edit_string = _layout->get_text ();
-		if (!insert_map.empty()) {
+		sample_edit_digit = -1;
+		if (_mode == MinSecSamples || _mode == Samples) {
+			if (pre_edit_string.size() < 2 || pre_edit_string.back() < '0' || pre_edit_string.back() > '9') {
+				return;
+			}
+			edit_string = pre_edit_string;
+			std::replace (edit_string.begin() + 1, edit_string.end(), ' ', '0');
+			const int last = edit_string.size() - 1;
+			sample_edit_digit = digit < 0 ? last : std::min (last, std::max (1, digit));
+			if (edit_string[sample_edit_digit] == ':' || edit_string[sample_edit_digit] == '+') {
+				++sample_edit_digit;
+			}
+			_layout->set_text (edit_string);
+		} else if (!insert_map.empty()) {
 			edit_string = pre_edit_string;
 		} else {
 			edit_string.clear ();
@@ -482,6 +504,7 @@ AudioClock::get_field (Field f)
 void
 AudioClock::end_edit (bool modify)
 {
+	samplepos_t exact_samples = 0;
 	if (modify) {
 
 		bool ok = true;
@@ -499,9 +522,17 @@ AudioClock::end_edit (bool modify)
 			ok = minsec_validate_edit (edit_string);
 			break;
 
-		case Seconds:
-			[[fallthrough]];
+		case MinSecSamples:
+			ok = parse_exact_samples (edit_string, exact_samples);
+			break;
+
 		case Samples:
+			if (sample_edit_digit >= 0) {
+				ok = parse_exact_samples (edit_string, exact_samples);
+				break;
+			}
+			[[fallthrough]];
+		case Seconds:
 			if (edit_string.length() < 1) {
 				edit_string = pre_edit_string;
 			}
@@ -511,6 +542,9 @@ AudioClock::end_edit (bool modify)
 		if (!ok) {
 			edit_string = pre_edit_string;
 			input_string.clear ();
+			if (sample_edit_digit >= 0) {
+				std::replace (edit_string.begin() + 1, edit_string.end(), ' ', '0');
+			}
 			_layout->set_text (edit_string);
 			show_edit_status (0);
 			/* edit attributes remain in use */
@@ -540,8 +574,12 @@ AudioClock::end_edit (bool modify)
 				samples = samples_from_seconds_string (edit_string);
 				break;
 
+			case MinSecSamples:
+				samples = exact_samples;
+				break;
+
 			case Samples:
-				samples = samples_from_audiosamples_string (edit_string);
+				samples = sample_edit_digit >= 0 ? exact_samples : samples_from_audiosamples_string (edit_string);
 				break;
 			}
 
@@ -734,6 +772,7 @@ AudioClock::parse_as_distance (const std::string& instr)
 	case Timecode:
 		return parse_as_timecode_distance (instr);
 		break;
+	case MinSecSamples:
 	case Samples:
 		return parse_as_samples_distance (instr);
 		break;
@@ -771,6 +810,7 @@ AudioClock::end_edit_relative (bool add)
 	case Seconds:
 		break;
 
+	case MinSecSamples:
 	case Samples:
 		break;
 	}
@@ -920,6 +960,7 @@ AudioClock::set_duration (Temporal::timecnt_t const & dur, bool force)
 			set_seconds (when);
 			break;
 
+		case MinSecSamples:
 		case Samples:
 			set_samples (when);
 			break;
@@ -978,6 +1019,7 @@ AudioClock::set (timepos_t const & w, bool force, bool round_to_beat)
 			set_seconds (when);
 			break;
 
+		case MinSecSamples:
 		case Samples:
 			set_samples (when);
 			break;
@@ -1083,6 +1125,46 @@ AudioClock::set_out_of_bounds (bool negative)
 }
 
 void
+AudioClock::print_minsec_samples (samplepos_t samples, char* buf, size_t size, ARDOUR::samplecnt_t rate)
+{
+	const bool negative = samples < 0;
+	const uint64_t magnitude = negative ? uint64_t (0) - uint64_t (samples) : uint64_t (samples);
+	const uint64_t seconds = magnitude / rate;
+	snprintf (buf, size, "%c%02" PRIu64 ":%02" PRIu64 ":%02" PRIu64 "+%06" PRIu64,
+	          negative ? '-' : ' ', seconds / 3600, seconds / 60 % 60, seconds % 60, magnitude % rate);
+}
+
+bool
+AudioClock::parse_exact_samples (const std::string& text, samplepos_t& samples) const
+{
+	if (text.size() < 2) {
+		return false;
+	}
+	const samplepos_t limit = _limit_pos.samples ();
+	samplepos_t magnitude = 0;
+	if (_mode == MinSecSamples) {
+		samplepos_t hours, minutes, seconds, remainder;
+		const samplecnt_t rate = _session->sample_rate ();
+		if (sscanf (text.c_str() + 1, "%" SCNd64 ":%" SCNd64 ":%" SCNd64 "+%" SCNd64,
+		            &hours, &minutes, &seconds, &remainder) != 4 ||
+		    hours < 0 || hours > limit / rate / 3600 ||
+		    minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60 ||
+		    remainder < 0 || remainder >= rate) {
+			return false;
+		}
+		magnitude = (hours * 3600 + minutes * 60 + seconds) * rate + remainder;
+	} else if (sscanf (text.c_str() + 1, "%" SCNd64, &magnitude) != 1) {
+		return false;
+	}
+
+	if (magnitude < 0 || magnitude >= limit) {
+		return false;
+	}
+	samples = text.front() == '-' ? -magnitude : magnitude;
+	return true;
+}
+
+void
 AudioClock::set_samples (timepos_t const & w)
 {
 	timepos_t when (w);
@@ -1090,7 +1172,7 @@ AudioClock::set_samples (timepos_t const & w)
 	bool negative = false;
 
 	if (_off) {
-		_layout->set_text (" ----------");
+		_layout->set_text (_mode == MinSecSamples ? " --:--:--+------" : " ----------");
 		_left_btn.set_text ("", false);
 		_right_btn.set_text ("", false);
 		return;
@@ -1103,6 +1185,9 @@ AudioClock::set_samples (timepos_t const & w)
 
 	if (when >= _limit_pos) {
 		set_out_of_bounds (negative);
+	} else if (_mode == MinSecSamples) {
+		print_minsec_samples (negative ? -when.samples() : when.samples(), buf, sizeof (buf), _session->sample_rate());
+		_layout->set_text (buf);
 	} else if (negative) {
 		snprintf (buf, sizeof (buf), "-%10" PRId64, when.samples());
 		_layout->set_text (buf);
@@ -1421,10 +1506,64 @@ AudioClock::set_session (Session *s)
 }
 
 bool
+AudioClock::edit_sample_digit (GdkEventKey* ev)
+{
+	int step = 0;
+	const int last = edit_string.size() - 1;
+	const guint key = ev->keyval;
+	if (key >= GDK_0 && key <= GDK_9) {
+		edit_string[sample_edit_digit] = '0' + key - GDK_0;
+		step = 1;
+	} else if (key >= GDK_KP_0 && key <= GDK_KP_9) {
+		edit_string[sample_edit_digit] = '0' + key - GDK_KP_0;
+		step = 1;
+	} else {
+		switch (key) {
+		case GDK_a:
+		case GDK_A:
+			if (_mode == Samples && Keyboard::modifier_state_equals (ev->state, Keyboard::PrimaryModifier)) {
+				sample_edit_digit = -1;
+				edit_string.clear ();
+				_layout->set_text ("");
+				queue_draw ();
+				return true;
+			}
+			break;
+		case GDK_Left:  step = -1; break;
+		case GDK_Right: step = 1; break;
+		case GDK_Home:  sample_edit_digit = 1; break;
+		case GDK_End:   sample_edit_digit = last; break;
+		case GDK_Delete: edit_string[sample_edit_digit] = '0'; break;
+		case GDK_BackSpace: edit_string[sample_edit_digit] = '0'; step = -1; break;
+		case GDK_minus:
+		case GDK_KP_Subtract:
+			if (_negative_allowed) {
+				edit_string[0] = edit_string[0] == '-' ? ' ' : '-';
+			}
+			break;
+		default:
+			return false;
+		}
+	}
+
+	sample_edit_digit = std::min (last, std::max (1, sample_edit_digit + step));
+	if (edit_string[sample_edit_digit] == ':' || edit_string[sample_edit_digit] == '+') {
+		sample_edit_digit += step;
+	}
+	_layout->set_text (edit_string);
+	queue_draw ();
+	return true;
+}
+
+bool
 AudioClock::on_key_press_event (GdkEventKey* ev)
 {
 	if (!editing) {
 		return false;
+	}
+
+	if (sample_edit_digit >= 0 && edit_sample_digit (ev)) {
+		return true;
 	}
 
 	string new_text;
@@ -1488,7 +1627,9 @@ AudioClock::on_key_press_event (GdkEventKey* ev)
 		break;
 
 	case GDK_plus:
-		end_edit_relative (true);
+		if (sample_edit_digit < 0) {
+			end_edit_relative (true);
+		}
 		return true;
 		break;
 
@@ -1599,6 +1740,14 @@ AudioClock::on_key_release_event (GdkEventKey *ev)
 	   so that they cannot possibly do double-duty
 	*/
 	switch (ev->keyval) {
+	case GDK_Left:
+	case GDK_Right:
+	case GDK_Home:
+	case GDK_End:
+	case GDK_BackSpace:
+	case GDK_Delete:
+		return sample_edit_digit >= 0;
+
 	case GDK_0:
 	case GDK_KP_0:
 	case GDK_1:
@@ -1678,6 +1827,20 @@ AudioClock::index_to_field (int index) const
 			return SS_Deciseconds;
 		}
 		break;
+	case MinSecSamples: {
+		const std::string text = _layout->get_text ();
+		const auto separator = text.find ('+');
+		if (separator == std::string::npos || index >= static_cast<int> (separator)) {
+			return S_Samples;
+		}
+		if (index >= static_cast<int> (separator) - 3) {
+			return Timecode_Seconds;
+		}
+		if (index >= static_cast<int> (separator) - 6) {
+			return Timecode_Minutes;
+		}
+		return Timecode_Hours;
+	}
 	case Samples:
 		return S_Samples;
 		break;
@@ -1714,6 +1877,7 @@ AudioClock::on_button_press_event (GdkEventButton *ev)
 				/* pretend it is a character on the far right */
 				index = 99;
 			}
+			sample_click_digit = index;
 			drag_field = index_to_field (index);
 			dragging = true;
 			/* make absolutely sure that the pointer is grabbed */
@@ -1752,7 +1916,7 @@ AudioClock::on_button_release_event (GdkEventButton *ev)
 				return true;
 			} else {
 				if (ev->button == 1) {
-					start_edit ();
+					start_edit (Field (0), sample_click_digit);
 				}
 			}
 		}
@@ -2008,6 +2172,7 @@ AudioClock::current_duration (timepos_t pos) const
 	case Timecode:
 	case MinSec:
 	case Seconds:
+	case MinSecSamples:
 	case Samples:
 		ret = last_time;
 		break;
@@ -2206,7 +2371,7 @@ AudioClock::samples_from_seconds_string (const string& str) const
 samplepos_t
 AudioClock::samples_from_audiosamples_string (const string& str) const
 {
-	samplepos_t f;
+	samplepos_t f = 0;
 	sscanf (str.c_str(), "%" PRId64, &f);
 	return f;
 }
@@ -2241,6 +2406,7 @@ AudioClock::build_ops_menu ()
 	ops_items.push_back (MenuElem (_("Bars:Beats"), sigc::bind (sigc::mem_fun(*this, &AudioClock::set_mode), BBT)));
 	ops_items.push_back (MenuElem (_("Minutes:Seconds"), sigc::bind (sigc::mem_fun(*this, &AudioClock::set_mode), MinSec)));
 	ops_items.push_back (MenuElem (_("Seconds"), sigc::bind (sigc::mem_fun(*this, &AudioClock::set_mode), Seconds)));
+	ops_items.push_back (MenuElem (_("Min:Sec + Samples"), sigc::bind (sigc::mem_fun(*this, &AudioClock::set_mode), MinSecSamples)));
 	ops_items.push_back (MenuElem (_("Samples"), sigc::bind (sigc::mem_fun(*this, &AudioClock::set_mode), Samples)));
 
 	if (editable && !_off && !is_duration && !_follows_playhead) {
@@ -2291,6 +2457,14 @@ AudioClock::set_mode (Mode m)
 		existing_duration = current_duration ();
 	}
 
+	if (editing) {
+		end_edit (false);
+	}
+	if (m == MinSecSamples || _mode == MinSecSamples) {
+		first_width = 0;
+		first_height = 0;
+		queue_resize ();
+	}
 	_mode = m;
 
 	insert_map.clear();
@@ -2347,6 +2521,7 @@ AudioClock::set_mode (Mode m)
 		insert_map.push_back (1);
 		break;
 
+	case MinSecSamples:
 	case Samples:
 		break;
 	}

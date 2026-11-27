@@ -53,7 +53,8 @@ public:
 		BBT,
 		MinSec,
 		Seconds,
-		Samples
+		Samples,
+		MinSecSamples
 	};
 
 	AudioClock (const std::string& clock_name, bool is_transient, const std::string& widget_name,
@@ -101,6 +102,7 @@ public:
 	 */
 	void set_scale (double x, double y);
 
+	static void print_minsec_samples (samplepos_t, char*, size_t, ARDOUR::samplecnt_t);
 	static void print_minsec (samplepos_t, char* buf, size_t bufsize, float sample_rate, int decimals = 3);
 
 	sigc::signal<void> ValueChanged;
@@ -182,6 +184,8 @@ private:
 	std::vector<int> insert_map;
 
 	bool editing;
+	int sample_edit_digit = -1;
+	int sample_click_digit = -1;
 	std::string edit_string;
 	std::string pre_edit_string;
 	std::string input_string;
@@ -233,7 +237,9 @@ private:
 
 	Field index_to_field () const;
 
-	void start_edit (Field f = Field (0));
+	void start_edit (Field f = Field (0), int digit = -1);
+	bool edit_sample_digit (GdkEventKey*);
+	bool parse_exact_samples (const std::string&, samplepos_t&) const;
 	void end_edit (bool);
 	void end_edit_relative (bool);
 

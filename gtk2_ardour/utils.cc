@@ -1072,6 +1072,14 @@ ARDOUR_UI_UTILS::format_position (ARDOUR::Session* s, Temporal::timepos_t const&
 			}
 			break;
 
+		case AudioClock::MinSecSamples: {
+			char exact[32];
+			AudioClock::print_minsec_samples (pos, exact, sizeof (exact), s->sample_rate ());
+			const char* display = exact[0] == ' ' ? exact + 1 : exact;
+			snprintf (buf, bufsize, onoff ? "%s" : "(%s)", display);
+			break;
+		}
+
 		case AudioClock::Samples:
 			if (onoff) {
 				snprintf (buf, bufsize, "%" PRId64, pos);

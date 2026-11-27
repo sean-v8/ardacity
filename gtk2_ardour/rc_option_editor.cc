@@ -1179,7 +1179,7 @@ public:
 		                 _("Waveform Clip Level (dBFS)"),
 		                 sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_waveform_clip_level),
 		                 sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_waveform_clip_level),
-		                 -50.0, -0.5, 0.1, 1.0, /* units of dB */
+		                 -50.0, 0.0, 0.1, 1.0, /* units of dB */
 		                 1.0,
 		                 false)
 	{

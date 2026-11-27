@@ -25,6 +25,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cassert>
@@ -78,6 +79,119 @@ AudioTimeAxisView::AudioTimeAxisView (PublicEditor& ed, Session* sess, ArdourCan
 	UIConfiguration::instance().ParameterChanged.connect (sigc::mem_fun (*this, &AudioTimeAxisView::parameter_changed));
 }
 
+double
+AudioTimeAxisView::waveform_value_at (double y) const
+{
+	const unsigned channels = std::max (1u, track ()->n_channels ().n_audio ());
+	const double height = std::max (1.0, double (_waveform_ruler.get_height ()) / channels);
+	const double local = std::fmod (std::max (0.0, y), height);
+	return _waveform_high - local / height * (_waveform_high - _waveform_low);
+}
+
+bool
+AudioTimeAxisView::draw_waveform_ruler (GdkEventExpose*)
+{
+	const unsigned channels = std::max (1u, track ()->n_channels ().n_audio ());
+	const double height = double (_waveform_ruler.get_height ()) / channels;
+	const double width = _waveform_ruler.get_width ();
+	auto context = _waveform_ruler.get_window ()->create_cairo_context ();
+	auto color = _waveform_ruler.get_style ()->get_fg (Gtk::STATE_NORMAL);
+	context->set_source_rgb (color.get_red_p (), color.get_green_p (), color.get_blue_p ());
+	context->set_line_width (1.0);
+	auto layout = _waveform_ruler.create_pango_layout ("");
+	const int intervals = height >= 84 ? 4 : (height >= 48 ? 2 : 1);
+	for (unsigned channel = 0; channel < channels; ++channel) {
+		for (int i = 0; i <= intervals; ++i) {
+			const double fraction = double (i) / intervals;
+			const double y = height * (channel + fraction);
+			const double amplitude = _waveform_high - fraction * (_waveform_high - _waveform_low);
+			char text[24];
+			snprintf (text, sizeof (text), "%+.3g", amplitude);
+			layout->set_text (text);
+			int tw, th;
+			layout->get_pixel_size (tw, th);
+			context->move_to (width - 5, y + 0.5);
+			context->line_to (width, y + 0.5);
+			context->stroke ();
+			const double label_y = std::max (height * channel,
+				std::min (y - th * 0.5, height * (channel + 1) - th));
+			context->move_to (std::max (0.0, width - tw - 7), label_y);
+			layout->show_in_cairo_context (context);
+		}
+	}
+	return true;
+}
+
+void
+AudioTimeAxisView::set_waveform_range (double low, double high)
+{
+	low = std::max (-8.0, low);
+	high = std::min (8.0, high);
+	if (high - low < 0.0001) {
+		return;
+	}
+	_waveform_low = low;
+	_waveform_high = high;
+	audio_view ()->set_waveform_range (low, high);
+	_waveform_ruler.queue_draw ();
+}
+
+void
+AudioTimeAxisView::zoom_waveform_at (double center, double factor)
+{
+	set_waveform_range (center + (_waveform_low - center) * factor,
+	                    center + (_waveform_high - center) * factor);
+}
+
+bool
+AudioTimeAxisView::waveform_ruler_press (GdkEventButton* event)
+{
+	const bool shift = (event->state & GDK_SHIFT_MASK) != 0;
+	const double center = waveform_value_at (event->y);
+	if (event->button == 1) {
+		_waveform_press_y = event->y;
+		return true;
+	}
+	if (event->button != 3) {
+		return true;
+	}
+	if (shift) {
+		set_waveform_range (-1, 1);
+		return true;
+	}
+	for (auto* child : _waveform_menu.get_children ()) {
+		_waveform_menu.remove (*child);
+	}
+	auto add_item = [this] (const char* label, const auto& slot) {
+		auto* item = Gtk::manage (new Gtk::MenuItem (label));
+		item->signal_activate ().connect (slot);
+		_waveform_menu.append (*item);
+		item->show ();
+	};
+	add_item (_("Reset Waveform Zoom"), [this] { set_waveform_range (-1, 1); });
+	add_item (_("Zoom In ×2"), [this, center] { zoom_waveform_at (center, 0.5); });
+	add_item (_("Zoom Out ×½"), [this, center] { zoom_waveform_at (center, 2.0); });
+	add_item (_("Half Wave"), [this] { set_waveform_range (0, 1); });
+	_waveform_menu.popup (event->button, event->time);
+	return true;
+}
+
+bool
+AudioTimeAxisView::waveform_ruler_release (GdkEventButton* event)
+{
+	if (event->button == 1 && _waveform_press_y >= 0) {
+		const double start = waveform_value_at (_waveform_press_y);
+		const double end = waveform_value_at (event->y);
+		if (std::abs (event->y - _waveform_press_y) >= 4 && start != end) {
+			set_waveform_range (std::min (start, end), std::max (start, end));
+		} else {
+			zoom_waveform_at (start, (event->state & GDK_SHIFT_MASK) ? 2.0 : 0.5);
+		}
+		_waveform_press_y = -1.0;
+	}
+	return true;
+}
+
 void
 AudioTimeAxisView::set_route (std::shared_ptr<Route> rt)
 {
@@ -123,6 +237,14 @@ AudioTimeAxisView::set_route (std::shared_ptr<Route> rt)
 	update_control_names ();
 
 	if (is_audio_track()) {
+		_waveform_ruler.set_size_request (48, -1);
+		_waveform_ruler.add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK);
+		_waveform_ruler.signal_expose_event ().connect (sigc::mem_fun (*this, &AudioTimeAxisView::draw_waveform_ruler));
+		_waveform_ruler.signal_button_press_event ().connect (sigc::mem_fun (*this, &AudioTimeAxisView::waveform_ruler_press));
+		_waveform_ruler.signal_button_release_event ().connect (sigc::mem_fun (*this, &AudioTimeAxisView::waveform_ruler_release));
+		time_axis_hbox.pack_end (_waveform_ruler, false, false);
+		_waveform_ruler.show ();
+
 		_route->presentation_info().PropertyChanged.connect (*this, invalidator (*this), std::bind (&AudioTimeAxisView::route_property_changed, this, _1), gui_context ());
 
 		/* ask for notifications of any new RegionViews */

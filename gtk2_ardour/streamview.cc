@@ -139,7 +139,7 @@ StreamView::set_samples_per_pixel (double fpp)
 {
 	RegionViewList::iterator i;
 
-	if (fpp < 1.0) {
+	if (!(fpp > 0.0)) {
 		return -1;
 	}
 

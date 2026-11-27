@@ -1823,6 +1823,53 @@ Editor::toggle_marker_section ()
 	loc->set_section (!loc->is_section ());
 }
 
+Location*
+Editor::selected_location_mark ()
+{
+	if (!_session || selection->markers.size () != 1) {
+		return nullptr;
+	}
+
+	bool is_start;
+	Location* loc = find_location_from_marker (selection->markers.front (), is_start);
+	return loc && loc->flags () == Location::IsMark ? loc : nullptr;
+}
+
+void
+Editor::rename_selected_location_mark ()
+{
+	if (Location* loc = selected_location_mark ()) {
+		edit_location (*loc, false, true);
+		_track_canvas->grab_focus ();
+	}
+}
+
+void
+Editor::move_selected_location_mark_to_playhead ()
+{
+	Location* loc = selected_location_mark ();
+	if (!loc || loc->locked () || _session->transport_rolling () || _session->actively_recording ()) {
+		return;
+	}
+
+	const timepos_t pos (_session->transport_sample ());
+	const timepos_t before_position = loc->start ();
+	if (before_position.samples () == pos.samples ()) {
+		return;
+	}
+
+	Locations* locations = _session->locations ();
+	XMLNode& before = locations->get_state ();
+	if (loc->set_start (pos, false) != 0 || loc->start () == before_position) {
+		delete &before;
+		return;
+	}
+
+	begin_reversible_command (_("Move Location Marker to Playhead"));
+	_session->add_command (new MementoCommand<Locations> (*locations, &before, &locations->get_state ()));
+	commit_reversible_command ();
+}
+
 void
 Editor::marker_menu_rename ()
 {

@@ -75,6 +75,18 @@ AudioStreamView::~AudioStreamView ()
 	undisplay_track ();
 }
 
+void
+AudioStreamView::set_waveform_range (double low, double high)
+{
+	_waveform_low = low;
+	_waveform_high = high;
+	for (auto* view : region_views) {
+		if (auto* audio = dynamic_cast<AudioRegionView*> (view)) {
+			audio->set_waveform_range (low, high);
+		}
+	}
+}
+
 int
 AudioStreamView::set_amplitude_above_axis (gdouble app)
 {
@@ -130,6 +142,7 @@ AudioStreamView::create_region_view (std::shared_ptr<Region> r, bool wait_for_wa
 
 	region_view->init (wait_for_waves);
 	region_view->set_amplitude_above_axis(_amplitude_above_axis);
+	region_view->set_waveform_range (_waveform_low, _waveform_high);
 	region_view->set_height (child_height ());
 
 	/* if its the special single-sample length that we use for rec-regions, make it

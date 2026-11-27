@@ -1074,6 +1074,16 @@ AudioRegionView::set_samples_per_pixel (gdouble fpp)
 }
 
 void
+AudioRegionView::set_waveform_range (double low, double high)
+{
+	_waveform_low = low;
+	_waveform_high = high;
+	for (auto* wave : waves) {
+		wave->set_waveform_range (low, high);
+	}
+}
+
+void
 AudioRegionView::set_amplitude_above_axis (gdouble a)
 {
 	for (uint32_t n=0; n < waves.size(); ++n) {
@@ -1581,6 +1591,7 @@ AudioRegionView::add_ghost (TimeAxisView& tv)
 		wave->set_channel (n);
 		wave->set_samples_per_pixel (samples_per_pixel);
 		wave->set_amplitude_above_axis (_amplitude_above_axis);
+		wave->set_waveform_range (_waveform_low, _waveform_high);
 
 		ghost->waves.push_back(wave);
 	}

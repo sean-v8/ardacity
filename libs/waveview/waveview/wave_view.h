@@ -137,6 +137,7 @@ public:
 
 	static Shape global_shape () { return _global_shape; }
 
+	void set_waveform_range (double, double);
 	void set_amplitude_above_axis (double v);
 
 	double amplitude_above_axis () const;

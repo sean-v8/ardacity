@@ -86,6 +86,7 @@ public:
 	void set_height (double);
 	void set_samples_per_pixel (double);
 
+	void set_waveform_range (double, double);
 	void set_amplitude_above_axis (gdouble spp);
 
 	void temporarily_hide_envelope (); ///< Dangerous!
@@ -195,6 +196,8 @@ protected:
 	std::shared_ptr<RegionFxLine> _fx_line;
 
 	double _amplitude_above_axis;
+	double _waveform_low = -1.0;
+	double _waveform_high = 1.0;
 
 	void reset_fade_shapes ();
 	void reset_fade_in_shape ();

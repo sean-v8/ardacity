@@ -90,8 +90,8 @@ class CueEditor : public EditingContext, public PBD::HistoryOwner
 	double get_y_origin () const;
 
 	void set_zoom_focus (Editing::ZoomFocus);
-	samplecnt_t get_current_zoom () const;
-	virtual void set_samples_per_pixel (samplecnt_t);
+	double get_current_zoom () const;
+	virtual void set_samples_per_pixel (double);
 	void reposition_and_zoom (samplepos_t, double);
 
 	/** Step the mouse mode onto the next or previous one.

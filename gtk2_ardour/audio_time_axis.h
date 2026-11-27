@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <ytkmm/drawingarea.h>
 #include <ytkmm/table.h>
 #include <ytkmm/button.h>
 #include <ytkmm/box.h>
@@ -86,6 +87,19 @@ public:
 private:
 	friend class AudioStreamView;
 	friend class AudioRegionView;
+
+	Gtk::DrawingArea _waveform_ruler;
+	Gtk::Menu _waveform_menu;
+	double _waveform_low = -1.0;
+	double _waveform_high = 1.0;
+	double _waveform_press_y = -1.0;
+
+	bool draw_waveform_ruler (GdkEventExpose*);
+	bool waveform_ruler_press (GdkEventButton*);
+	bool waveform_ruler_release (GdkEventButton*);
+	double waveform_value_at (double) const;
+	void set_waveform_range (double, double);
+	void zoom_waveform_at (double, double);
 
 	void route_active_changed ();
 	void parameter_changed (std::string const &);

@@ -56,6 +56,7 @@ public:
 	AudioStreamView (AudioTimeAxisView&);
 	~AudioStreamView ();
 
+	void set_waveform_range (double, double);
 	int     set_amplitude_above_axis (gdouble app);
 	gdouble get_amplitude_above_axis () { return _amplitude_above_axis; }
 
@@ -86,6 +87,8 @@ private:
 	void color_handler ();
 
 	double _amplitude_above_axis;
+	double _waveform_low = -1.0;
+	double _waveform_high = 1.0;
 
 	std::map<std::shared_ptr<ARDOUR::Source>, bool> rec_data_ready_map;
 
