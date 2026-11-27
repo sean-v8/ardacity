@@ -23,6 +23,8 @@
 
 #include <string>
 
+#include <optional>
+
 #include <ydkmm/pixbuf.h>
 #include <ytkmm/label.h>
 #include <ytkmm/drawingarea.h>
@@ -77,6 +79,10 @@ public:
 
 	std::string session_name (bool& should_be_new);
 	std::string session_folder ();
+	bool use_recording_folder () const;
+	std::optional<double> import_peak_target ();
+	bool select_recording_folder (const std::string& folder);
+	bool validate_recording_folder (const std::string& folder, const std::string& name);
 
 	Temporal::TimeDomain session_domain () const;
 
@@ -196,6 +202,10 @@ private:
 	void setup_untitled_session ();
 
 	Gtk::FileChooserButton new_folder_chooser;
+	Gtk::CheckButton _use_recording_folder;
+	Gtk::CheckButton _normalize_folder_imports;
+	Gtk::SpinButton _import_peak_target;
+	void update_folder_normalization_sensitivity ();
 
 	struct SessionTemplateColumns : public Gtk::TreeModel::ColumnRecord {
 		SessionTemplateColumns () {
@@ -230,6 +240,8 @@ private:
 	std::string load_template_override;
 
 	void new_name_changed ();
+	void suggest_recording_folder_name ();
+	std::string _suggested_session_name;
 	void new_name_activated ();
 	void populate_session_templates ();
 

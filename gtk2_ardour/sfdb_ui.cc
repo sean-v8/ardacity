@@ -69,6 +69,7 @@
 #include "ardour/source_factory.h"
 #include "ardour/session.h"
 #include "ardour/session_directory.h"
+#include "ardour/session_utils.h"
 #include "ardour/srcfilesource.h"
 #include "ardour/profile.h"
 
@@ -1560,10 +1561,7 @@ SoundFileOmega::reset_options ()
 		where_combo.set_sensitive (true);
 		sort_combo.set_sensitive (paths.size () > 1 && (ImportAsTrack == get_mode () || ImportAsTrigger == get_mode ()));
 
-		/* if we get through this function successfully, this may be
-		 * reset at the end, once we know if we can use hard links
-		 * to do embedding (or if we are importing a MIDI file).
-		 */
+		/* Reset at the end once we know whether references are allowed. */
 		file_reference_combo.set_sensitive (false);
 	}
 
@@ -1571,7 +1569,8 @@ SoundFileOmega::reset_options ()
 	bool src_needed;
 	bool must_copy;
 	bool selection_includes_multichannel;
-	bool selection_can_be_embedded_with_links = check_link_status (_session, paths);
+	/* External references in a recording-folder session are opened directly. */
+	const bool can_reference = _recording_folder_import || check_link_status (_session, paths);
 	ImportMode mode;
 
 	/* See if we are thinking about importing any MIDI files */
@@ -1734,10 +1733,17 @@ SoundFileOmega::reset_options ()
 	 * or any file if we are under nsm control */
 	must_copy |= _session->get_nsm_state() || have_a_midi_file || notebook.get_current_page() == 2;
 
-	if (must_copy || !selection_can_be_embedded_with_links) {
+	const bool reference_available = !must_copy && can_reference;
+	if (!reference_available) {
+		if (_recording_folder_import && _file_reference_before_forced_copy < 0) {
+			_file_reference_before_forced_copy = file_reference_combo.get_active_row_number ();
+		}
 		file_reference_combo.set_active (0);
+	} else if (_file_reference_before_forced_copy >= 0) {
+		file_reference_combo.set_active (_file_reference_before_forced_copy);
+		_file_reference_before_forced_copy = -1;
 	}
-	file_reference_combo.set_sensitive (!must_copy && selection_can_be_embedded_with_links);
+	file_reference_combo.set_sensitive (reference_available);
 
 	return true;
 }
@@ -1892,6 +1898,7 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 	, selected_midi_track_cnt (selected_midi_tracks)
 	, _import_active (false)
 	, _reset_post_import (false)
+	, _recording_folder_import (s && !recording_session_name (s->path ()).empty ())
 {
 	vector<string> str;
 
@@ -1995,7 +2002,7 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 	str.push_back (_("External Reference"));
 	str.push_back (_("Temporary Reference"));
 	set_popdown_strings (file_reference_combo, str);
-	file_reference_combo.set_active_text (str.front());
+	file_reference_combo.set_active (_recording_folder_import ? 1 : 0);
 
 	str.clear ();
 	str.push_back (_("Best"));
@@ -2056,6 +2063,19 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 	action_combo.set_active_text (importmode2string(mode_hint));
 
 	reset (selected_audio_tracks, selected_midi_tracks);
+}
+
+void
+SoundFileOmega::set_session (Session* s)
+{
+	const bool was_recording_folder = _recording_folder_import;
+	_recording_folder_import = s && !recording_session_name (s->path ()).empty ();
+	if (s != _session && (was_recording_folder || _recording_folder_import)) {
+		_file_reference_before_forced_copy = -1;
+		file_reference_combo.set_active (_recording_folder_import ? 1 : 0);
+	}
+
+	SoundFileBrowser::set_session (s);
 }
 
 void

@@ -35,8 +35,9 @@
 #include "pbd/error.h"
 
 #include "ardour/filename_extensions.h"
-#include "ardour/utils.h"
+#include "ardour/session.h"
 #include "ardour/session_utils.h"
+#include "ardour/utils.h"
 
 #include "pbd/i18n.h"
 
@@ -49,6 +50,68 @@ using namespace std;
 using namespace PBD;
 
 namespace ARDOUR {
+
+string
+recording_session_directory_name (const string& session_name)
+{
+	return "." + session_name + statefile_suffix;
+}
+
+string
+recording_session_name (const string& directory)
+{
+	const string basename = Glib::path_get_basename (directory);
+	const size_t suffix_length = strlen (statefile_suffix);
+	if (basename.size () <= 1 + suffix_length || basename.front () != '.' ||
+	    !g_str_has_suffix (basename.c_str (), statefile_suffix)) {
+		return "";
+	}
+	return basename.substr (1, basename.size () - 1 - suffix_length);
+}
+
+bool
+resolve_recording_session_link (string& directory, const string& snapshot)
+{
+	const string statefile = snapshot + statefile_suffix;
+	const string hidden = recording_session_directory_name (snapshot);
+	const string link = Glib::build_filename (directory, statefile);
+
+	if (!Glib::file_test (link, Glib::FILE_TEST_IS_SYMLINK)) {
+		return false;
+	}
+
+	gchar* target = g_file_read_link (link.c_str (), nullptr);
+	const bool matches = target && Glib::build_filename (hidden, statefile) == target;
+	g_free (target);
+
+	if (!matches || !Glib::file_test (link, Glib::FILE_TEST_IS_REGULAR)) {
+		return false;
+	}
+
+	directory = canonical_path (Glib::build_filename (directory, hidden));
+	return true;
+}
+
+string
+recording_session_creation_error (const string& folder, const string& name)
+{
+	if (name.empty () || name.front () == '.' || !Session::session_name_is_legal (name).empty ()) {
+		return _("Enter a valid session name that does not begin with a dot.");
+	}
+
+	if (!Glib::file_test (folder, Glib::FILE_TEST_IS_DIR)) {
+		return _("Select an existing recording folder.");
+	}
+
+	const Glib::FileTest occupied = Glib::FileTest (Glib::FILE_TEST_EXISTS | Glib::FILE_TEST_IS_SYMLINK);
+	const string link = Glib::build_filename (folder, name + statefile_suffix);
+	const string directory = Glib::build_filename (folder, recording_session_directory_name (name));
+	if (Glib::file_test (link, occupied) || Glib::file_test (directory, occupied)) {
+		return string_compose (_("A file or folder for session \"%1\" already exists in \"%2\"."), name, folder);
+	}
+
+	return "";
+}
 
 int
 find_session (string str, string& path, string& snapshot, bool& isnew)
@@ -124,12 +187,12 @@ find_session (string str, string& path, string& snapshot, bool& isnew)
 				snapshot = str;
 			}
 
-			suffix = snapshot.find (statefile_suffix);
+			suffix = snapshot.rfind (statefile_suffix);
 
 			const string::size_type start_pos_of_extension = snapshot.size () - strlen (statefile_suffix);
 			// we should check the start of extension position
 			// because files '*.ardour.bak' are possible
-			if (suffix != start_pos_of_extension) {
+			if (suffix == string::npos || suffix != start_pos_of_extension) {
 				error << string_compose (_("%1 is not a snapshot file"), str) << endmsg;
 				return -1;
 			}

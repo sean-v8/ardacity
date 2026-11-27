@@ -135,6 +135,7 @@
 #include "ardour/session_metadata.h"
 #include "ardour/session_playlists.h"
 #include "ardour/session_state_utils.h"
+#include "ardour/session_utils.h"
 #include "ardour/silentfilesource.h"
 #include "ardour/smf_source.h"
 #include "ardour/sndfilesource.h"
@@ -455,7 +456,9 @@ Session::raid_path () const
 void
 Session::setup_raid_path (string path)
 {
-	if (path.empty()) {
+	const std::string recording_name = recording_session_name (_path);
+	const bool recording_folder = !recording_name.empty () && recording_name == _name;
+	if (path.empty () && !recording_folder) {
 		return;
 	}
 
@@ -464,7 +467,8 @@ Session::setup_raid_path (string path)
 
 	session_dirs.clear ();
 
-	Searchpath search_path(path);
+	/* Keep generated media inside the recording-folder session directory. */
+	const Searchpath search_path = recording_folder ? Searchpath (vector<string> { _path }) : Searchpath (path);
 	Searchpath sound_search_path;
 	Searchpath midi_search_path;
 
@@ -3942,7 +3946,7 @@ static bool
 state_file_filter (const string &str, void* /*arg*/)
 {
 	return (str.length() > strlen(statefile_suffix)
-	        && str.find (statefile_suffix) == (str.length() - strlen (statefile_suffix))
+	        && g_str_has_suffix (str.c_str (), statefile_suffix)
 	        && str.substr (0, 2) != "._" /* ignore HFS+ extended data */
 	       );
 }

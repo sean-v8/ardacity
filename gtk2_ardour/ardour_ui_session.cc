@@ -36,13 +36,29 @@
 #include "gtk2ardour-version.h"
 #endif
 
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstring>
+
+#ifndef PLATFORM_WINDOWS
+#include <fcntl.h>
+#include <unistd.h>
+#include <gio/gio.h>
+#endif
+
 #include <glibmm/error.h>
+#include <glibmm/fileutils.h>
+
+#include "pbd/gstdio_compat.h"
+#include "pbd/pathexpand.h"
 
 #include <ytkmm/progressbar.h>
 #include <ytkmm/stock.h>
 
 #include "pbd/basename.h"
 #include "pbd/localtime_r.h"
+#include "pbd/stateful_diff_command.h"
 #include "pbd/unwind.h"
 
 #include "gtkmm2ext/application.h"
@@ -52,13 +68,17 @@
 #include "widgets/prompter.h"
 
 #include "ardour/audioengine.h"
+#include "ardour/audiofilesource.h"
+#include "ardour/audioregion.h"
 #include "ardour/filename_extensions.h"
+#include "ardour/playlist.h"
 #include "ardour/plugin_manager.h"
 #include "ardour/profile.h"
 #include "ardour/session.h"
 #include "ardour/session_utils.h"
 #include "ardour/session_state_utils.h"
 #include "ardour/session_directory.h"
+#include "ardour/track.h"
 #include "ardour/wrong_program.h"
 
 #include "ardour_message.h"
@@ -68,6 +88,7 @@
 #include "missing_plugin_dialog.h"
 #include "opts.h"
 #include "plugin_scan_dialog.h"
+#include "progress_reporter.h"
 #include "public_editor.h"
 #include "save_as_dialog.h"
 #include "session_dialog.h"
@@ -127,7 +148,7 @@ ARDOUR_UI::build_session_from_dialog (SessionDialog& sd, const std::string& sess
 		bus_profile.master_out_channels = (uint32_t) sd.master_channel_count();
 	}
 
-	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain);
+	build_session (session_path, session_name, session_template, bus_profile, false, !sd.was_new_name_edited(), domain, !nsm && sd.use_recording_folder (), sd.import_peak_target ());
 }
 
 /** This is only ever used once Ardour is already running with a session
@@ -185,6 +206,17 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		likely_new = true;
 	}
 
+	if (!nsm && session_dialog->use_recording_folder ()) {
+		if (!session_dialog->validate_recording_folder (session_path, session_name)) {
+			return;
+		}
+		template_name = session_dialog->use_session_template () ? session_dialog->session_template_name () : "";
+		session_dialog->hide ();
+		delete_when_idle (session_dialog);
+		build_session_from_dialog (*session_dialog, session_path, session_name, template_name, session_domain);
+		return;
+	}
+
 	/* could be an archived session, so test for that and use the
 	 * result if it was
 	 */
@@ -217,10 +249,9 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		}
 	}
 
-	string::size_type suffix = session_name.find (statefile_suffix);
-
-	if (suffix != string::npos) {
-		session_name = session_name.substr (0, suffix);
+	if ((likely_new || session_name.find (G_DIR_SEPARATOR) != string::npos) &&
+	    g_str_has_suffix (session_name.c_str (), statefile_suffix)) {
+		session_name.erase (session_name.size () - strlen (statefile_suffix));
 	}
 
 	/* this shouldn't happen, but we catch it just in case it does */
@@ -229,7 +260,7 @@ ARDOUR_UI::session_dialog_response_handler (int response, SessionDialog* session
 		return; /* back to main event loop */
 	}
 
-	if (session_dialog->use_session_template()) {
+	if (likely_new && session_dialog->use_session_template()) {
 		template_name = session_dialog->session_template_name();
 		_session_is_new = true;
 	}
@@ -414,7 +445,9 @@ ARDOUR_UI::load_session_stage_two (const std::string& path, const std::string& s
 	BootMessage (string_compose (_("Please wait while %1 loads your session"), PROGRAM_NAME));
 
 	try {
-		new_session = new Session (*AudioEngine::instance(), path, snap_name, 0, mix_template);
+		std::string session_path = path;
+		resolve_recording_session_link (session_path, snap_name);
+		new_session = new Session (*AudioEngine::instance(), session_path, snap_name, 0, mix_template);
 	}
 
 	/* this one is special */
@@ -636,7 +669,7 @@ ARDOUR_UI::load_session_stage_two (const std::string& path, const std::string& s
 }
 
 int
-ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain)
+ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name, const std::string& session_template, BusProfile const& bus_profile, bool from_startup_fsm, bool unnamed, Temporal::TimeDomain domain, bool recording_folder, std::optional<double> import_peak)
 {
 	int x;
 
@@ -655,11 +688,11 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	 * asked for the SR (even if try-autostart-engine is set)
 	 */
 	if (from_startup_fsm && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 	}
 	/* Sample-rate cannot be changed when JACK is running */
 	if (!ARDOUR::AudioEngine::instance()->setup_required () && AudioEngine::instance()->running ()) {
-		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain);
+		return build_session_stage_two (path, snap_name, session_template, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 	}
 
 	/* Work-around missing "OK" button:
@@ -675,7 +708,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 	audio_midi_setup->set_position (WIN_POS_CENTER);
 	audio_midi_setup->set_modal ();
 	audio_midi_setup->present ();
-	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain));
+	_engine_dialog_connection = audio_midi_setup->signal_response().connect (std::bind (&ARDOUR_UI::audio_midi_setup_for_new_session_done, this, _1, path, snap_name, session_template, bus_profile, unnamed, domain, recording_folder, import_peak));
 
 	/* not done yet, but we're avoiding modal dialogs */
 	return 0;
@@ -683,7 +716,7 @@ ARDOUR_UI::build_session (const std::string& path, const std::string& snap_name,
 
 
 void
-ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain)
+ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path, std::string snap_name, std::string template_name, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, bool recording_folder, std::optional<double> import_peak)
 {
 	_engine_dialog_connection.disconnect ();
 
@@ -701,20 +734,211 @@ ARDOUR_UI::audio_midi_setup_for_new_session_done (int response, std::string path
 	audio_midi_setup->set_modal (false);
 	audio_midi_setup->hide();
 
-	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain);
+	build_session_stage_two (path, snap_name, template_name, bus_profile, unnamed, domain, 0, recording_folder, import_peak);
 }
 
+namespace {
+
+class ImportPeakProgress : public ArdourDialog, public ProgressReporter
+{
+public:
+	ImportPeakProgress ()
+		: ArdourDialog (_("Normalizing imported tracks"), true)
+	{
+		set_position (WIN_POS_CENTER);
+		get_vbox ()->set_size_request (400, -1);
+		get_vbox ()->pack_start (_bar, PACK_SHRINK, 4);
+		add_button (Stock::CANCEL, RESPONSE_CANCEL);
+		signal_response ().connect ([this] (int) { cancel (); });
+	}
+
+private:
+	void update_progress_gui (float fraction) override
+	{
+		_bar.set_fraction (fraction);
+	}
+
+	ProgressBar _bar;
+};
+
+void
+normalize_newly_imported_tracks (Session& session, const RouteList& previous_tracks, double target)
+{
+	vector<std::shared_ptr<AudioRegion>> regions;
+	const auto tracks = session.get_tracks ();
+	for (const auto& route : *tracks) {
+		if (std::find (previous_tracks.begin (), previous_tracks.end (), route) != previous_tracks.end ()) {
+			continue;
+		}
+
+		const auto track = std::dynamic_pointer_cast<Track> (route);
+		const auto playlist_regions = track->playlist ()->region_list ();
+		for (const auto& region : *playlist_regions) {
+			if (auto audio = std::dynamic_pointer_cast<AudioRegion> (region)) {
+				regions.push_back (audio);
+			}
+		}
+	}
+
+	if (regions.empty ()) {
+		return;
+	}
+
+	ImportPeakProgress progress;
+	progress.show_all ();
+	vector<double> peaks;
+	peaks.reserve (regions.size ());
+	for (const auto& region : regions) {
+		progress.descend (1.f / regions.size ());
+		peaks.push_back (region->maximum_amplitude (&progress));
+		progress.ascend ();
+		if (progress.cancelled ()) {
+			return;
+		}
+	}
+	progress.hide ();
+
+	bool changed = false;
+	for (size_t i = 0; i < regions.size (); ++i) {
+		if (peaks[i] <= 0 || !std::isfinite (peaks[i])) {
+			continue;
+		}
+
+		const auto& region = regions[i];
+		const auto prior_gain = region->scale_amplitude ();
+		region->clear_changes ();
+		region->normalize (peaks[i], target);
+		if (prior_gain != region->scale_amplitude ()) {
+			if (!changed) {
+				session.begin_reversible_command (_("Normalize imported tracks"));
+				changed = true;
+			}
+			session.add_command (new StatefulDiffCommand (region));
+		}
+	}
+	if (changed) {
+		session.commit_reversible_command ();
+	}
+}
+
+} // namespace
+
+static vector<string>
+recording_folder_wavs (const string& folder)
+{
+	vector<string> paths;
+	try {
+		Glib::Dir dir (folder);
+		for (const string& name : dir) {
+			if (name.size () < 4 || g_ascii_strcasecmp (name.c_str () + name.size () - 4, ".wav") != 0) {
+				continue;
+			}
+
+			const string path = Glib::build_filename (folder, name);
+			if (!Glib::file_test (path, Glib::FILE_TEST_IS_REGULAR)) {
+				continue;
+			}
+
+			SoundFileInfo info;
+			string reason;
+			if (AudioFileSource::get_soundfile_info (path, info, reason) && info.seekable && info.length > 0) {
+				paths.push_back (path);
+			} else {
+				PBD::warning << string_compose (_("Cannot reference WAV file %1: %2"), path,
+				                                reason.empty () ? _("empty or unreadable audio") : reason)
+				             << endmsg;
+			}
+		}
+	} catch (const Glib::FileError& e) {
+		PBD::warning << string_compose (_("Cannot read WAV files in %1: %2"), folder, e.what ()) << endmsg;
+	}
+
+	std::sort (paths.begin (), paths.end ());
+	return paths;
+}
+
+#ifndef PLATFORM_WINDOWS
+static void
+prepare_recording_folder_export (const std::string& parent, const std::string& session_name)
+{
+	const std::string folder = Glib::build_filename (parent, session_name);
+
+	if (g_mkdir (folder.c_str (), 0755) != 0 &&
+	    (errno != EEXIST || !Glib::file_test (folder, Glib::FILE_TEST_IS_DIR) ||
+	     Glib::file_test (folder, Glib::FILE_TEST_IS_SYMLINK))) {
+		PBD::warning << string_compose (_("Could not prepare export folder %1"), folder) << endmsg;
+		return;
+	}
+
+	const std::string notes = Glib::build_filename (folder, session_name + ".txt");
+	const int fd = g_open (notes.c_str (), O_WRONLY | O_CREAT | O_EXCL, 0666);
+	if (fd >= 0) {
+		close (fd);
+	} else if (errno != EEXIST || !Glib::file_test (notes, Glib::FILE_TEST_IS_REGULAR) ||
+	           Glib::file_test (notes, Glib::FILE_TEST_IS_SYMLINK)) {
+		PBD::warning << string_compose (_("Could not prepare export notes %1"), notes) << endmsg;
+		return;
+	}
+
+	GAppInfo* editor = g_app_info_get_default_for_type ("text/plain", false);
+	if (!editor) {
+		PBD::warning << string_compose (_("No default text editor for %1"), notes) << endmsg;
+		return;
+	}
+
+	GFile* file = g_file_new_for_path (notes.c_str ());
+	GList files = { file, nullptr, nullptr };
+	GError* launch_error = nullptr;
+	if (!g_app_info_launch (editor, &files, nullptr, &launch_error)) {
+		PBD::warning << string_compose (_("Could not open export notes %1: %2"), notes, launch_error->message) << endmsg;
+		g_clear_error (&launch_error);
+	}
+
+	g_object_unref (file);
+	g_object_unref (editor);
+}
+#endif
+
 int
-ARDOUR_UI::build_session_stage_two (std::string const& path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate)
+ARDOUR_UI::build_session_stage_two (std::string const& chosen_path, std::string const& snap_name, std::string const& session_template, BusProfile const& bus_profile, bool unnamed, Temporal::TimeDomain domain, samplecnt_t samplerate, bool recording_folder, std::optional<double> import_peak)
 {
 	PBD::Unwinder uw (_loading_session, true);
+
+	std::string path = chosen_path;
+#ifndef PLATFORM_WINDOWS
+	std::string visible_link;
+	std::string relative_target;
+	if (recording_folder) {
+		const std::string problem = recording_session_creation_error (chosen_path, snap_name);
+		if (!problem.empty ()) {
+			ArdourMessageDialog msg (problem);
+			msg.run ();
+			return -1;
+		}
+
+		const std::string folder = canonical_path (chosen_path);
+		const std::string hidden = recording_session_directory_name (snap_name);
+		const std::string statefile = snap_name + statefile_suffix;
+		path = Glib::build_filename (folder, hidden);
+		visible_link = Glib::build_filename (folder, statefile);
+		relative_target = Glib::build_filename (hidden, statefile);
+
+		/* Reserve this directory exclusively before initializing the session. */
+		if (g_mkdir (path.c_str (), 0755) != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not create session folder \"%1\": %2"), path, g_strerror (errno)));
+			msg.run ();
+			return -1;
+		}
+		unnamed = false;
+	}
+#endif
 
 	Session* new_session;
 
 	bool meta_session = !session_template.empty() && session_template.substr (0, 11) == "urn:ardour:";
 
 	try {
-		new_session = new Session (*AudioEngine::instance(), path, snap_name, bus_profile.master_out_channels > 0 ? &bus_profile : NULL, meta_session ? "" : session_template, unnamed, samplerate);
+		new_session = new Session (*AudioEngine::instance(), path, snap_name, bus_profile.master_out_channels > 0 ? &bus_profile : NULL, meta_session ? "" : session_template, unnamed, samplerate, recording_folder);
 	}
 	catch (SessionException const& e) {
 		stringstream ss;
@@ -795,9 +1019,48 @@ ARDOUR_UI::build_session_stage_two (std::string const& path, std::string const& 
 
 	set_session (new_session);
 
-	new_session->save_state(new_session->name());
+	if (recording_folder) {
+		if (meta_session) {
+			meta_session_setup (session_template.substr (11));
+		}
 
-	if (meta_session) {
+		const vector<string> wavs = recording_folder_wavs (Glib::path_get_dirname (path));
+		if (!wavs.empty ()) {
+			Temporal::timepos_t start (new_session->current_start_sample ());
+			const auto previous_tracks = import_peak ? new_session->get_tracks () : nullptr;
+			PublicEditor::instance ().do_embed (wavs, Editing::ImportDistinctFiles, Editing::ImportAsTrack, false, start);
+			if (previous_tracks) {
+				normalize_newly_imported_tracks (*new_session, *previous_tracks, *import_peak);
+			}
+
+			/* Fit the session after GTK has allocated the editor canvas. */
+			Glib::signal_idle ().connect_once ([this, new_session] () {
+				if (_session == new_session) {
+					PublicEditor::instance ().access_action ("Editor", "zoom-to-session");
+				}
+			});
+		}
+	}
+
+	const int saved = new_session->save_state (recording_folder ? snap_name : new_session->name ());
+
+#ifndef PLATFORM_WINDOWS
+	if (recording_folder) {
+		if (saved != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not save session in \"%1\". The visible session link was not created."), path));
+			msg.run ();
+		} else if (symlink (relative_target.c_str (), visible_link.c_str ()) != 0) {
+			ArdourMessageDialog msg (string_compose (_("Could not create session link \"%1\": %2. The session was saved in \"%3\"."), visible_link, g_strerror (errno), path));
+			msg.run ();
+		} else {
+			prepare_recording_folder_export (Glib::path_get_dirname (path), snap_name);
+		}
+	}
+#else
+	(void) saved;
+#endif
+
+	if (meta_session && !recording_folder) {
 		meta_session_setup (session_template.substr (11));
 	}
 
@@ -877,6 +1140,14 @@ void
 ARDOUR_UI::rename_session (bool for_unnamed)
 {
 	if (!_session) {
+		return;
+	}
+
+	std::string parent = Glib::path_get_dirname (_session->path ());
+	const std::string recording_name = recording_session_name (_session->path ());
+	if (!recording_name.empty () && resolve_recording_session_link (parent, recording_name) && parent == _session->path ()) {
+		ArdourMessageDialog msg (_("Rename is unavailable for sessions with a recording-folder link. Use Save As to create a session with a new name."));
+		msg.run ();
 		return;
 	}
 

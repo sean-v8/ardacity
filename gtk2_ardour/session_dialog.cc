@@ -57,6 +57,7 @@
 #include "ardour/recent_sessions.h"
 #include "ardour/session.h"
 #include "ardour/session_state_utils.h"
+#include "ardour/session_utils.h"
 #include "ardour/template_utils.h"
 #include "ardour/filename_extensions.h"
 
@@ -273,6 +274,11 @@ SessionDialog::SessionDialog (DialogTab initial_tab, const std::string& session_
 	setup_untitled_session ();
 	setup_recent_sessions ();
 
+#ifndef PLATFORM_WINDOWS
+	_use_recording_folder.set_active (
+		UIConfiguration::instance ().get_create_in_existing_folder_by_default ());
+#endif
+
 	if (!Config->get_demo_session_index_url ().empty ()) {
 		setup_demo_sessions ();
 	}
@@ -482,7 +488,15 @@ SessionDialog::session_name (bool& should_be_new)
 	case 2: {
 		/* existing session chosen from file chooser */
 		should_be_new = false;
-		return existing_session_chooser.get_filename ();
+		const std::string filename = existing_session_chooser.get_filename ();
+		if (g_str_has_suffix (filename.c_str (), statefile_suffix)) {
+			std::string directory = Glib::path_get_dirname (filename);
+			const std::string snapshot = PBD::basename_nosuffix (filename);
+			if (resolve_recording_session_link (directory, snapshot)) {
+				return Glib::build_filename (directory, snapshot + statefile_suffix);
+			}
+		}
+		return filename;
 	} break;
 	case 3: {
 		string val = demo_name_entry.get_text ();
@@ -494,12 +508,66 @@ SessionDialog::session_name (bool& should_be_new)
 	return "";
 }
 
+bool
+SessionDialog::use_recording_folder () const
+{
+	return _tabs.get_current_page () == 0 && _use_recording_folder.get_active ();
+}
+
+bool
+SessionDialog::select_recording_folder (const std::string& folder)
+{
+	if (!new_folder_chooser.set_filename (PBD::canonical_path (folder))) {
+		return false;
+	}
+
+	_use_recording_folder.set_active (true);
+	suggest_recording_folder_name ();
+	return true;
+}
+
+std::optional<double>
+SessionDialog::import_peak_target ()
+{
+	if (!use_recording_folder () || !_normalize_folder_imports.get_active ()) {
+		return std::nullopt;
+	}
+	_import_peak_target.update ();
+	return _import_peak_target.get_value ();
+}
+
+void
+SessionDialog::update_folder_normalization_sensitivity ()
+{
+	_normalize_folder_imports.set_sensitive (_use_recording_folder.get_active ());
+	_import_peak_target.set_sensitive (_use_recording_folder.get_active () && _normalize_folder_imports.get_active ());
+}
+
+bool
+SessionDialog::validate_recording_folder (const std::string& folder, const std::string& name)
+{
+	const std::string problem = ARDOUR::recording_session_creation_error (folder, name);
+	if (problem.empty ()) {
+		return true;
+	}
+
+	/* ArdourDialog hides on response, and showing it resets the tab. */
+	present ();
+	_tabs.set_current_page (New);
+	ArdourMessageDialog msg (*this, problem);
+	msg.run ();
+	return false;
+}
+
 std::string
 SessionDialog::session_folder ()
 {
 	switch (_tabs.get_current_page()) {
 		case 0:
 			{
+				if (use_recording_folder ()) {
+					return new_folder_chooser.get_filename ();
+				}
 				std::string val = new_name_entry.get_text();
 				strip_whitespace_edges (val);
 				std::string legal_session_folder_name = legalize_for_path (val);
@@ -729,7 +797,36 @@ void
 SessionDialog::setup_untitled_session ()
 {
 	new_name_entry.set_text (string_compose (_("Untitled-%1"), Glib::DateTime::create_now_local().format ("%F-%H-%M-%S")));
+	_suggested_session_name = new_name_entry.get_text ();
 	new_name_was_edited = false;
+}
+
+void
+SessionDialog::suggest_recording_folder_name ()
+{
+	const std::string current_name = new_name_entry.get_text ();
+	if (!current_name.empty () && current_name != _suggested_session_name) {
+		return;
+	}
+
+	if (!_use_recording_folder.get_active ()) {
+		setup_untitled_session ();
+		return;
+	}
+
+	const std::string folder = new_folder_chooser.get_filename ();
+	if (folder.empty ()) {
+		return;
+	}
+
+	std::string name = Glib::path_get_basename (folder);
+	strip_whitespace_edges (name);
+	if (name.empty () || name.front () == '.' || !Session::session_name_is_legal (name).empty ()) {
+		return;
+	}
+
+	_suggested_session_name = name;
+	new_name_entry.set_text (name);
 }
 
 void
@@ -953,6 +1050,36 @@ SessionDialog::setup_new_session_page ()
 	session_new_vbox.pack_start (*timebase_box, false, true);
 #endif
 	session_new_vbox.pack_start (*folder_box, false, true);
+#ifndef PLATFORM_WINDOWS
+	_use_recording_folder.set_label (_("Create session in an existing folder"));
+	_use_recording_folder.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
+	new_folder_chooser.signal_file_set ().connect (
+		sigc::mem_fun (*this, &SessionDialog::suggest_recording_folder_name));
+	session_new_vbox.pack_start (_use_recording_folder, false, true);
+
+	_normalize_folder_imports.set_label (_("Normalize imported tracks"));
+	_normalize_folder_imports.set_active (UIConfiguration::instance ().get_normalize_existing_folder_imports ());
+	_import_peak_target.set_range (-112., 0.);
+	_import_peak_target.set_increments (0.01, 1.);
+	_import_peak_target.set_digits (2);
+	_import_peak_target.set_numeric (true);
+	_import_peak_target.set_value (UIConfiguration::instance ().get_existing_folder_import_peak ());
+
+	HBox* normalize_box = manage (new HBox (false, 8));
+	normalize_box->pack_start (_normalize_folder_imports, false, true);
+	Label* peak_label = manage (new Label (_("Peak target (dBFS)")));
+	peak_label->set_mnemonic_widget (_import_peak_target);
+	normalize_box->pack_start (*peak_label, false, true);
+	normalize_box->pack_start (_import_peak_target, false, true);
+	session_new_vbox.pack_start (*normalize_box, false, true);
+
+	_use_recording_folder.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::update_folder_normalization_sensitivity));
+	_normalize_folder_imports.signal_toggled ().connect (
+		sigc::mem_fun (*this, &SessionDialog::update_folder_normalization_sensitivity));
+	update_folder_normalization_sensitivity ();
+#endif
 	session_new_vbox.pack_start (*name_hbox, false, true);
 	session_new_vbox.show_all ();
 }
@@ -1224,7 +1351,8 @@ SessionDialog::redisplay_recent_sessions ()
 			// if there's not a session file with the same name as the session directory,
 			// opening the parent item will fail, but expanding it will show the session
 			// files that actually exist, and the right one can then be opened.
-			row[recent_session_columns.visible_name] = Glib::path_get_basename (dirname);
+			const std::string recording_name = recording_session_name (dirname);
+			row[recent_session_columns.visible_name] = recording_name.empty () ? Glib::path_get_basename (dirname) : recording_name;
 			int64_t most_recent = 0;
 
 			// add the children

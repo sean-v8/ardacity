@@ -26,6 +26,12 @@
 
 namespace ARDOUR {
 
+	/* The visible link and its target have the same statefile basename. */
+	LIBARDOUR_API extern std::string recording_session_directory_name (const std::string& session_name);
+	LIBARDOUR_API extern std::string recording_session_name (const std::string& directory);
+	LIBARDOUR_API extern bool resolve_recording_session_link (std::string& directory, const std::string& snapshot);
+	LIBARDOUR_API extern std::string recording_session_creation_error (const std::string& folder, const std::string& name);
+
 	LIBARDOUR_API extern int find_session (std::string str, std::string& path, std::string& snapshot, bool& isnew);
 	LIBARDOUR_API extern int inflate_session (const std::string& zipfile, const std::string& target_dir, std::string& path, std::string& snapshot);
 	LIBARDOUR_API extern std::string inflate_error (int);
