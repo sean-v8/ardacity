@@ -9906,6 +9906,19 @@ Editor::zoom_waveform_to_selection_peak ()
 				}
 			}
 		}
+	} else if (selection->regions.empty ()) {
+		const samplepos_t sample = _playhead_cursor->current_sample ();
+		const timepos_t position (sample);
+		for (auto* track : selection->tracks) {
+			auto* view = dynamic_cast<AudioTimeAxisView*> (track);
+			if (!view || !view->playlist ()) {
+				continue;
+			}
+			auto region = std::dynamic_pointer_cast<AudioRegion> (view->playlist ()->top_region_at (position));
+			if (region && !scan (*view, *region, sample, sample + 1)) {
+				return;
+			}
+		}
 	} else {
 		for (auto* region_view : selection->regions) {
 			auto* audio_view = dynamic_cast<AudioRegionView*> (region_view);
