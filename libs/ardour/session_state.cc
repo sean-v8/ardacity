@@ -4931,6 +4931,11 @@ Session::restore_history (string snapshot_name)
 						ut->add_command(c);
 					}
 
+				} else if (n->name () == "RenderMixCommand") {
+					if ((c = render_command_factory (*n))) {
+						ut->add_command (c);
+					}
+
 				} else if (n->name() == "TempoCommand") {
 
 					ut->add_command (new TempoCommand (*n));

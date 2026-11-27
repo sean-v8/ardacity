@@ -1175,11 +1175,11 @@ LuaBindings::common (lua_State* L)
 
 		.beginClass <InterThreadInfo> ("InterThreadInfo")
 		.addVoidConstructor ()
-		.addData ("done", const_cast<bool InterThreadInfo::*>(&InterThreadInfo::done))
+		.addProperty ("done", &InterThreadInfo::get_done, &InterThreadInfo::set_done)
 #if 0 // currently unused, lua is single-threaded, no custom UIs.
 		.addData ("cancel", (bool InterThreadInfo::*)&InterThreadInfo::cancel)
 #endif
-		.addData ("progress", const_cast<float InterThreadInfo::*>(&InterThreadInfo::progress))
+		.addProperty ("progress", &InterThreadInfo::get_progress, &InterThreadInfo::set_progress)
 		.endClass ()
 
 		.beginClass <TimelineRange> ("TimelineRange")

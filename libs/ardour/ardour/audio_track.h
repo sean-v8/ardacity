@@ -43,6 +43,7 @@ class LIBARDOUR_API AudioTrack : public Track
 	void unfreeze ();
 
 	bool bounceable (std::shared_ptr<Processor>, bool include_endpoint) const;
+	ChanCount render_output_streams ();
 
 	int export_stuff (BufferSet& bufs, samplepos_t start_sample, samplecnt_t nframes,
 	                  std::shared_ptr<Processor> endpoint, bool include_endpoint, bool for_export, bool for_freeze,

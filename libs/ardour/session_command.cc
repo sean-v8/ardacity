@@ -21,6 +21,7 @@
 
 #include <string>
 
+#include "ardour/audio_track.h"
 #include "ardour/automation_list.h"
 #include "ardour/location.h"
 #include "ardour/midi_automation_list_binder.h"
@@ -186,4 +187,79 @@ Session::stateful_diff_command_factory (XMLNode* n)
 	      << endmsg;
 
 	return 0;
+}
+
+namespace {
+
+class RenderMixCommand : public Command
+{
+public:
+	RenderMixCommand (Session& session, XMLNode const& state)
+		: _session (session)
+		, _state (state)
+	{
+	}
+
+	~RenderMixCommand () { drop_references (); }
+
+	void operator() () override { swap_routes ("Originals", "Mix"); }
+	void undo () override { swap_routes ("Mix", "Originals"); }
+
+	XMLNode& get_state () const override { return *new XMLNode (_state); }
+
+private:
+	void swap_routes (char const* remove, char const* restore)
+	{
+		auto outgoing = _state.child (remove);
+		auto incoming = _state.child (restore);
+		auto routes = std::make_shared<RouteList> ();
+		for (auto child : outgoing->children ()) {
+			ID id;
+			if (child->get_property ("id", id)) {
+				if (auto route = _session.route_by_id (id)) {
+					routes->push_back (route);
+				}
+			}
+		}
+
+		/* Keep the current tracks if the backend cannot recreate the
+		 * saved tracks, for example after a change in available ports.
+		 */
+		if (!incoming->children ().empty ()) {
+			XMLNode snapshot (*incoming);
+			if (_session.load_routes (snapshot, Stateful::current_state_version)) {
+				error << _("Could not restore the tracks in the render operation.") << endmsg;
+				return;
+			}
+		}
+		if (!routes->empty ()) {
+			_session.remove_routes (routes);
+		}
+	}
+
+	Session& _session;
+	XMLNode _state;
+};
+
+} // namespace
+
+void
+Session::add_render_mix_command (RouteList const& originals, std::shared_ptr<AudioTrack> const& mix)
+{
+	XMLNode state ("RenderMixCommand");
+	auto replaced = state.add_child ("Originals");
+	for (auto const& original : originals) {
+		replaced->add_child_nocopy (original->get_state ());
+	}
+	state.add_child ("Mix")->add_child_nocopy (mix->get_state ());
+	add_command (new RenderMixCommand (*this, state));
+}
+
+PBD::Command*
+Session::render_command_factory (XMLNode& node)
+{
+	if (!node.child ("Mix") || !node.child ("Originals")) {
+		return nullptr;
+	}
+	return new RenderMixCommand (*this, node);
 }

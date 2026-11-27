@@ -243,6 +243,13 @@ AudioTrack::export_stuff (BufferSet& buffers, samplepos_t start, samplecnt_t nfr
 	return 0;
 }
 
+ChanCount
+AudioTrack::render_output_streams ()
+{
+	ChanCount channels = n_channels ();
+	return bounce_get_output_streams (channels, main_outs (), false, false, false);
+}
+
 bool
 AudioTrack::bounceable (std::shared_ptr<Processor> endpoint, bool include_endpoint) const
 {
