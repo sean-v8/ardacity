@@ -5484,6 +5484,8 @@ Editor::super_rapid_screen_update ()
 void
 Editor::session_going_away ()
 {
+	_pre_sample_zoom = 0;
+	_peak_zoom_active = false;
 	_have_idled = false;
 
 	_session_connections.drop_connections ();

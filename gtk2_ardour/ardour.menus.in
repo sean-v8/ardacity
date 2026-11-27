@@ -605,6 +605,9 @@
         <menuitem action='zoom-to-selection'/>
         <menuitem action='zoom-to-selection-horiz'/>
         <menuitem action='zoom-waveform-to-selection-peak'/>
+        <menuitem action='toggle-sample-zoom'/>
+        <menuitem action='zoom-framed-waveforms-in'/>
+        <menuitem action='zoom-framed-waveforms-out'/>
         <menuitem action='fit-selection'/>
         <menuitem action='toggle-zoom'/>
         <menuitem action='expand-tracks'/>

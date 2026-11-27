@@ -309,6 +309,9 @@ Editor::register_actions ()
 	reg_sens (editor_actions, "zoom-to-selection-horiz", _("Zoom to Selection (Horizontal)"), sigc::bind (sigc::mem_fun(*this, &Editor::temporal_zoom_selection), Horizontal));
 	reg_sens (editor_actions, "zoom-waveform-to-selection-peak", _("Zoom Vertically to Selection Peak"),
 	          sigc::mem_fun (*this, &Editor::zoom_waveform_to_selection_peak));
+	reg_sens (editor_actions, "toggle-sample-zoom", _("Toggle Close Sample View"), sigc::mem_fun (*this, &Editor::toggle_sample_zoom));
+	reg_sens (editor_actions, "zoom-framed-waveforms-in", _("Zoom Framed Waveforms In"), sigc::bind (sigc::mem_fun (*this, &Editor::zoom_framed_waveforms), true));
+	reg_sens (editor_actions, "zoom-framed-waveforms-out", _("Zoom Framed Waveforms Out"), sigc::bind (sigc::mem_fun (*this, &Editor::zoom_framed_waveforms), false));
 	reg_sens (editor_actions, "toggle-zoom", _("Toggle Zoom State"), sigc::mem_fun(*this, &Editor::swap_visual_state));
 
 	reg_sens (editor_actions, "expand-tracks", _("Expand Track Height"), sigc::bind (sigc::mem_fun (*this, &Editor::tav_zoom_step), false));

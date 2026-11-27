@@ -497,6 +497,11 @@ public:
 
 	void temporal_zoom_selection (Editing::ZoomAxis);
 	void zoom_waveform_to_selection_peak ();
+	void zoom_framed_waveforms (bool in);
+	void toggle_sample_zoom ();
+	double _pre_sample_zoom = 0;
+	samplepos_t _pre_sample_zoom_origin = 0;
+	bool _peak_zoom_active = false;
 	void temporal_zoom_session ();
 	void temporal_zoom_extents ();
 

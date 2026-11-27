@@ -146,14 +146,44 @@ AudioTimeAxisView::set_waveform_range (double low, double high)
 }
 
 void
-AudioTimeAxisView::zoom_waveform_to_peak (double amplitude)
+AudioTimeAxisView::zoom_waveform_to_peak (double amplitude, double low, double high)
 {
-	if (amplitude != 0.0 && UIConfiguration::instance().get_waveform_scale () == ARDOUR::Logarithmic) {
-		amplitude = std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (amplitude))), amplitude);
+	const bool logscaled = UIConfiguration::instance().get_waveform_scale () == ARDOUR::Logarithmic;
+	auto display_value = [logscaled] (double value) {
+		return logscaled && value != 0.0
+			? std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (value))), value)
+			: value;
+	};
+
+	_pre_peak_low = _waveform_low;
+	_pre_peak_high = _waveform_high;
+	_waveform_peak_framed = true;
+	_waveform_peak = std::max (-8.0, std::min (8.0, display_value (amplitude)));
+	const double below = _waveform_peak < 0.0 ? 0.05 : 0.95;
+	const double span = std::max ((_waveform_peak - display_value (low)) / below,
+	                              (display_value (high) - _waveform_peak) / (1.0 - below)) / 0.95;
+	step_waveform_peak_zoom (span / (_waveform_high - _waveform_low));
+}
+
+void
+AudioTimeAxisView::restore_waveform_peak_zoom ()
+{
+	if (_waveform_peak_framed) {
+		_waveform_peak_framed = false;
+		set_waveform_range (_pre_peak_low, _pre_peak_high);
 	}
-	const double center = std::max (-8.0, std::min (8.0, amplitude));
-	/* A zero-width request expands to the ruler's minimum span. */
-	set_waveform_range (center, center);
+}
+
+void
+AudioTimeAxisView::step_waveform_peak_zoom (double factor)
+{
+	if (!_waveform_peak_framed) {
+		return;
+	}
+	const double span = std::max (0.0004, std::min (16.0, (_waveform_high - _waveform_low) * factor));
+	const double below = _waveform_peak < 0.0 ? 0.05 : 0.95;
+	const double low = std::max (-8.0, std::min (8.0 - span, _waveform_peak - below * span));
+	set_waveform_range (low, low + span);
 }
 
 void

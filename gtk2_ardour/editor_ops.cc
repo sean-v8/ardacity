@@ -9850,13 +9850,60 @@ Editor::effective_zoom_focus() const
 }
 
 void
+Editor::toggle_sample_zoom ()
+{
+	if (!_session || _visible_canvas_width <= 0) {
+		return;
+	}
+	if (_pre_sample_zoom > 0) {
+		const double zoom = _pre_sample_zoom;
+		_pre_sample_zoom = 0;
+		reposition_and_zoom (_pre_sample_zoom_origin, zoom);
+		return;
+	}
+	_pre_sample_zoom = samples_per_pixel;
+	_pre_sample_zoom_origin = _leftmost_sample;
+	const samplepos_t sample = _playhead_cursor->current_sample ();
+	reposition_and_zoom (std::max<samplepos_t> (0, sample - 16), 32.0 / _visible_canvas_width);
+}
+
+void
+Editor::zoom_framed_waveforms (bool in)
+{
+	for (auto* track : track_views) {
+		if (auto* view = dynamic_cast<AudioTimeAxisView*> (track)) {
+			view->step_waveform_peak_zoom (in ? 0.5 : 2.0);
+		}
+	}
+}
+
+void
 Editor::zoom_waveform_to_selection_peak ()
 {
 	if (!_session || !selection) {
 		return;
 	}
 
-	std::map<AudioTimeAxisView*, double> peaks;
+	if (_peak_zoom_active) {
+		_peak_zoom_active = false;
+		for (auto* track : track_views) {
+			if (auto* view = dynamic_cast<AudioTimeAxisView*> (track)) {
+				view->restore_waveform_peak_zoom ();
+			}
+		}
+		return;
+	}
+
+	struct PeakFrame {
+		double low = 0.0;
+		double high = 0.0;
+		double peak = 0.0;
+		samplepos_t position = 0;
+		bool has_sample = false;
+	};
+	const bool at_playhead = selection->time.empty () && selection->regions.empty ();
+	const samplepos_t playhead = _playhead_cursor->current_sample ();
+	std::map<AudioTimeAxisView*, PeakFrame> peaks;
 	std::vector<Sample> buffer (64 * 1024);
 	auto scan = [&] (AudioTimeAxisView& view, AudioRegion const& region,
 	                 samplepos_t start, samplepos_t end) {
@@ -9867,7 +9914,7 @@ Editor::zoom_waveform_to_selection_peak ()
 			return true;
 		}
 
-		double& peak = peaks[&view];
+		PeakFrame& frame = peaks[&view];
 		const double gain = region.scale_amplitude () * view.audio_view ()->get_amplitude_above_axis ();
 		while (offset < limit) {
 			const samplecnt_t count = std::min<samplecnt_t> (limit - offset, buffer.size ());
@@ -9877,8 +9924,18 @@ Editor::zoom_waveform_to_selection_peak ()
 				}
 				for (samplecnt_t i = 0; i < count; ++i) {
 					const double value = buffer[i] * gain;
-					if (std::abs (value) > std::abs (peak)) {
-						peak = value;
+					if (!std::isfinite (value)) {
+						continue;
+					}
+					const samplepos_t sample = position + offset + i;
+					frame.low = std::min (frame.low, value);
+					frame.high = std::max (frame.high, value);
+					if ((!at_playhead || sample == playhead) &&
+					    (!frame.has_sample || std::abs (value) > std::abs (frame.peak) ||
+					     (std::abs (value) == std::abs (frame.peak) && sample < frame.position))) {
+						frame.peak = value;
+						frame.position = sample;
+						frame.has_sample = true;
 					}
 				}
 			}
@@ -9915,7 +9972,7 @@ Editor::zoom_waveform_to_selection_peak ()
 				continue;
 			}
 			auto region = std::dynamic_pointer_cast<AudioRegion> (view->playlist ()->top_region_at (position));
-			if (region && !scan (*view, *region, sample, sample + 1)) {
+			if (region && !scan (*view, *region, std::max<samplepos_t> (0, sample - 16), sample + 17)) {
 				return;
 			}
 		}
@@ -9934,8 +9991,23 @@ Editor::zoom_waveform_to_selection_peak ()
 		}
 	}
 
+	double strongest = -1.0;
+	samplepos_t target = playhead;
 	for (auto const& entry : peaks) {
-		entry.first->zoom_waveform_to_peak (entry.second);
+		const PeakFrame& frame = entry.second;
+		if (!frame.has_sample) {
+			continue;
+		}
+		entry.first->zoom_waveform_to_peak (frame.peak, frame.low, frame.high);
+		const double magnitude = std::abs (frame.peak);
+		if (magnitude > strongest || (magnitude == strongest && frame.position < target)) {
+			strongest = magnitude;
+			target = frame.position;
+		}
+	}
+	_peak_zoom_active = strongest >= 0.0;
+	if (_peak_zoom_active && !at_playhead && target != playhead) {
+		_session->request_locate (target);
 	}
 }
 

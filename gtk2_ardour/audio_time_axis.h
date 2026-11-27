@@ -75,7 +75,9 @@ public:
 	AudioStreamView* audio_view();
 
 	void set_show_waveforms_recording (bool yn);
-	void zoom_waveform_to_peak (double amplitude);
+	void zoom_waveform_to_peak (double amplitude, double low, double high);
+	void restore_waveform_peak_zoom ();
+	void step_waveform_peak_zoom (double factor);
 
 	void create_automation_child (const Evoral::Parameter& param, bool show);
 
@@ -94,6 +96,10 @@ private:
 	double _waveform_low = -1.0;
 	double _waveform_high = 1.0;
 	double _waveform_press_y = -1.0;
+	bool _waveform_peak_framed = false;
+	double _waveform_peak = 0.0;
+	double _pre_peak_low = -1.0;
+	double _pre_peak_high = 1.0;
 
 	bool draw_waveform_ruler (GdkEventExpose*);
 	bool waveform_ruler_press (GdkEventButton*);
