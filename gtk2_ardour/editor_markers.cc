@@ -1510,7 +1510,7 @@ Editor::marker_menu_range_to_next ()
 
 	if (end != max_samplepos) {
 		string range_name = l->name();
-		range_name += "-range";
+//		range_name += "-range";
 
 		Location* newrange = new Location (*_session, marker->position(), end, range_name, Location::IsRangeMarker);
 		_session->locations()->add (newrange);

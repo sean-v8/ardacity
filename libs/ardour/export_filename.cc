@@ -205,7 +205,7 @@ ExportFilename::get_path (ExportFormatSpecPtr format) const
 	}
 
 	if (include_label) {
-		path += filename_empty ? "" : "_";
+//		path += filename_empty ? "" : "_";
 		path += label;
 		filename_empty = false;
 	}
