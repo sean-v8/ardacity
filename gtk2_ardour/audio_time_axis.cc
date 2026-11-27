@@ -245,8 +245,6 @@ AudioTimeAxisView::set_route (std::shared_ptr<Route> rt)
 		time_axis_hbox.pack_end (_waveform_ruler, false, false);
 		_waveform_ruler.show ();
 
-		_route->presentation_info().PropertyChanged.connect (*this, invalidator (*this), std::bind (&AudioTimeAxisView::route_property_changed, this, _1), gui_context ());
-
 		/* ask for notifications of any new RegionViews */
 		_view->RegionViewAdded.connect (sigc::mem_fun(*this, &AudioTimeAxisView::region_view_added));
 
@@ -447,6 +445,7 @@ AudioTimeAxisView::update_control_names ()
 void
 AudioTimeAxisView::route_property_changed (PBD::PropertyChange const& what_changed)
 {
+	RouteTimeAxisView::route_property_changed (what_changed);
 	if (what_changed.contains (Properties::transient)) {
 		update_control_names ();
 	}
