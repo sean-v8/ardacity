@@ -508,6 +508,9 @@ AudioRegionView::reset_width_dependent_items (double pixel_width)
 	assert(_pixel_width == pixel_width);
 
 	pending_peak_data->set_x1(pixel_width);
+	if (_stereo_divider) {
+		_stereo_divider->set_x1 (pixel_width);
+	}
 
 	if (pixel_width <= 20.0 || _height < 5.0 || !trackview.session()->config.get_show_region_fades()) {
 		if (fade_in_handle)       { fade_in_handle->hide(); }
@@ -597,6 +600,11 @@ AudioRegionView::set_height (gdouble height)
 
 	RouteTimeAxisView& atv (*(dynamic_cast<RouteTimeAxisView*>(&trackview))); // ick
 	uint32_t nchans = atv.track()->n_channels().n_audio();
+	if (_stereo_divider) {
+		const double y = floor (_effective_height * 0.5);
+		_stereo_divider->set_y0 (y);
+		_stereo_divider->set_y1 (y);
+	}
 
 	if (!tmp_waves.empty () || !waves.empty ()) {
 
@@ -1342,6 +1350,14 @@ AudioRegionView::create_waves ()
 
 	ChanCount nchans = atv.track()->n_channels();
 
+	if (nchans.n_audio () == 2 && audio_region ()->n_channels () == 2 && !_stereo_divider) {
+		const double y = floor (_effective_height * 0.5);
+		_stereo_divider = new ArdourCanvas::Line (group);
+		_stereo_divider->set (ArdourCanvas::Duple (0, y), ArdourCanvas::Duple (_pixel_width, y));
+		_stereo_divider->set_outline_color (Gtkmm2ext::rgba_to_color (0.65, 0.65, 0.65, 0.65));
+		_stereo_divider->set_ignore_events (true);
+	}
+
 	// cerr << "creating waves for " << _region->name() << " with wfd = " << wait_for_data
 	//		<< " and channels = " << nchans.n_audio() << endl;
 
@@ -1484,6 +1500,10 @@ AudioRegionView::create_one_wave (uint32_t which, bool direct)
 			if (frame_handle_start) frame_handle_start->raise_to_top();
 			if (frame_handle_end) frame_handle_end->raise_to_top();
 		}
+	}
+
+	if (_stereo_divider) {
+		_stereo_divider->raise_to_top ();
 	}
 
 	/* channel wave created, don't hook into peaks ready anymore */

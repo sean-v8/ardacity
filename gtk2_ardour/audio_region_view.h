@@ -172,6 +172,7 @@ protected:
 		WaveformLogScaled = 0x10,
 	};
 
+	ArdourCanvas::Line* _stereo_divider = nullptr;
 	std::vector<ArdourWaveView::WaveView *> waves;
 	std::vector<ArdourWaveView::WaveView *> tmp_waves; ///< see \ref create_waves()
 
