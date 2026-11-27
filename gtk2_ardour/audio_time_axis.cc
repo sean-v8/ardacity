@@ -101,7 +101,7 @@ AudioTimeAxisView::draw_waveform_ruler (GdkEventExpose*)
 	auto layout = _waveform_ruler.create_pango_layout ("");
 	const int intervals = height >= 84 ? 4 : (height >= 48 ? 2 : 1);
 	const double tick_step = (_waveform_high - _waveform_low) / intervals;
-	const int decimals = std::max (1, int (std::ceil (-std::log10 (tick_step))));
+	const int decimals = std::min (4, std::max (1, int (std::ceil (-std::log10 (tick_step)))));
 	const double zero_threshold = 0.5 * std::pow (10.0, -decimals);
 	for (unsigned channel = 0; channel < channels; ++channel) {
 		for (int i = 0; i <= intervals; ++i) {
@@ -131,8 +131,12 @@ AudioTimeAxisView::set_waveform_range (double low, double high)
 {
 	low = std::max (-8.0, low);
 	high = std::min (8.0, high);
-	if (high - low < 0.0001) {
-		return;
+	/* Leave one unit in the last displayed decimal place between ticks. */
+	const double minimum_span = 0.0004;
+	if (high - low < minimum_span) {
+		const double center = (low + high) * 0.5;
+		low = std::max (-8.0, std::min (8.0 - minimum_span, center - minimum_span * 0.5));
+		high = low + minimum_span;
 	}
 	_waveform_low = low;
 	_waveform_high = high;
