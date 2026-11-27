@@ -29,6 +29,7 @@ Analyser::Analyser (float sample_rate, unsigned int channels, samplecnt_t bufsiz
 	, _result (*_rp)
 	, _n_samples (n_samples)
 	, _pos (0)
+	, _fft_plan (0)
 {
 
 	//printf ("NEW ANALYSER %p r:%.1f c:%d f:%ld l%ld\n", this, sample_rate, channels, bufsize, n_samples);
@@ -38,47 +39,49 @@ Analyser::Analyser (float sample_rate, unsigned int channels, samplecnt_t bufsiz
 
 	set_duration (n_samples);
 
-	_fft_data_size   = _bufsize / 2;
-	_fft_freq_per_bin = sample_rate / _fft_data_size / 2.f;
+	if (bins > 0) {
+		_fft_data_size   = _bufsize / 2;
+		_fft_freq_per_bin = sample_rate / _fft_data_size / 2.f;
 
-	_fft_data_in  = (float *) fftwf_malloc (sizeof (float) * _bufsize);
-	_fft_data_out = (float *) fftwf_malloc (sizeof (float) * _bufsize);
-	_fft_power    = (float *) malloc (sizeof (float) * _fft_data_size);
+		_fft_data_in  = (float *) fftwf_malloc (sizeof (float) * _bufsize);
+		_fft_data_out = (float *) fftwf_malloc (sizeof (float) * _bufsize);
+		_fft_power    = (float *) malloc (sizeof (float) * _fft_data_size);
 
-	for (uint32_t i = 0; i < _fft_data_size; ++i) {
-		_fft_power[i] = 0;
-	}
-	for (uint32_t i = 0; i < _bufsize; ++i) {
-		_fft_data_out[i] = 0;
-	}
+		for (uint32_t i = 0; i < _fft_data_size; ++i) {
+			_fft_power[i] = 0;
+		}
+		for (uint32_t i = 0; i < _bufsize; ++i) {
+			_fft_data_out[i] = 0;
+		}
 
-	const size_t height = _result.spectrum[0].size ();
-	const float nyquist = (sample_rate * .5);
+		const size_t height = _result.spectrum[0].size ();
+		const float nyquist = (sample_rate * .5);
 #if 0 // linear
 #define YPOS(FREQ) rint (height * (1.0 - FREQ / nyquist))
 #else
 #define YPOS(FREQ) rint (height * (1 - logf (1.f + .1f * _fft_data_size * FREQ / nyquist) / logf (1.f + .1f * _fft_data_size)))
 #endif
 
-	_result.freq[0] = YPOS (50);
-	_result.freq[1] = YPOS (100);
-	_result.freq[2] = YPOS (500);
-	_result.freq[3] = YPOS (1000);
-	_result.freq[4] = YPOS (5000);
-	_result.freq[5] = YPOS (10000);
+		_result.freq[0] = YPOS (50);
+		_result.freq[1] = YPOS (100);
+		_result.freq[2] = YPOS (500);
+		_result.freq[3] = YPOS (1000);
+		_result.freq[4] = YPOS (5000);
+		_result.freq[5] = YPOS (10000);
 
-	_fft_plan = fftwf_plan_r2r_1d (_bufsize, _fft_data_in, _fft_data_out, FFTW_R2HC, FFTW_MEASURE);
+		_fft_plan = fftwf_plan_r2r_1d (_bufsize, _fft_data_in, _fft_data_out, FFTW_R2HC, FFTW_MEASURE);
 
-	_hann_window = (float *) malloc (sizeof (float) * _bufsize);
-	double sum = 0.0;
+		_hann_window = (float *) malloc (sizeof (float) * _bufsize);
+		double sum = 0.0;
 
-	for (uint32_t i = 0; i < _bufsize; ++i) {
-		_hann_window[i] = 0.5f - (0.5f * (float) cos (2.0f * M_PI * (float)i / (float)(_bufsize)));
-		sum += _hann_window[i];
-	}
-	const double isum = 2.0 / sum;
-	for (uint32_t i = 0; i < _bufsize; ++i) {
-		_hann_window[i] *= isum;
+		for (uint32_t i = 0; i < _bufsize; ++i) {
+			_hann_window[i] = 0.5f - (0.5f * (float) cos (2.0f * M_PI * (float)i / (float)(_bufsize)));
+			sum += _hann_window[i];
+		}
+		const double isum = 2.0 / sum;
+		for (uint32_t i = 0; i < _bufsize; ++i) {
+			_hann_window[i] *= isum;
+		}
 	}
 
 	if (channels == 2) {
@@ -90,11 +93,13 @@ Analyser::Analyser (float sample_rate, unsigned int channels, samplecnt_t bufsiz
 
 Analyser::~Analyser ()
 {
-	fftwf_destroy_plan (_fft_plan);
-	fftwf_free (_fft_data_in);
-	fftwf_free (_fft_data_out);
-	free (_fft_power);
-	free (_hann_window);
+	if (_fft_plan) {
+		fftwf_destroy_plan (_fft_plan);
+		fftwf_free (_fft_data_in);
+		fftwf_free (_fft_data_out);
+		free (_fft_power);
+		free (_hann_window);
+	}
 }
 
 void
@@ -129,7 +134,9 @@ Analyser::process (ProcessContext<float> const & ctx)
 	samplecnt_t s;
 	const unsigned cmask = _result.n_channels - 1; // [0, 1]
 	for (s = 0; s < n_samples; ++s) {
-		_fft_data_in[s] = 0;
+		if (_fft_plan) {
+			_fft_data_in[s] = 0;
+		}
 		const samplecnt_t pbin = (_pos + s) / _spp;
 		assert (pbin >= 0 && pbin < (samplecnt_t) _result.width);
 		for (unsigned int c = 0; c < _channels; ++c) {
@@ -141,13 +148,17 @@ Analyser::process (ProcessContext<float> const & ctx)
 			const unsigned int cc = c & cmask;
 			if (_result.peaks[cc][pbin].min > v) { _result.peaks[cc][pbin].min = *d; }
 			if (_result.peaks[cc][pbin].max < v) { _result.peaks[cc][pbin].max = *d; }
-			_fft_data_in[s] += v * _hann_window[s] / (float) _channels;
+			if (_fft_plan) {
+				_fft_data_in[s] += v * _hann_window[s] / (float) _channels;
+			}
 			++d;
 		}
 	}
 
 	for (; s < _bufsize; ++s) {
-		_fft_data_in[s] = 0;
+		if (_fft_plan) {
+			_fft_data_in[s] = 0;
+		}
 		for (unsigned int c = 0; c < _result.n_channels; ++c) {
 			_bufs[c][s] = 0.f;
 		}
@@ -176,40 +187,42 @@ Analyser::process (ProcessContext<float> const & ctx)
 		_dbtp_plugins.at(c)->process (_bufs, Vamp::RealTime::fromSeconds ((double) _pos / _sample_rate));
 	}
 
-	fftwf_execute (_fft_plan);
+	if (_fft_plan) {
+		fftwf_execute (_fft_plan);
 
-	_fft_power[0] = _fft_data_out[0] * _fft_data_out[0];
+		_fft_power[0] = _fft_data_out[0] * _fft_data_out[0];
 #define FRe (_fft_data_out[i])
 #define FIm (_fft_data_out[_bufsize - i])
-	for (uint32_t i = 1; i < _fft_data_size - 1; ++i) {
-		_fft_power[i] = (FRe * FRe) + (FIm * FIm);
-	}
+		for (uint32_t i = 1; i < _fft_data_size - 1; ++i) {
+			_fft_power[i] = (FRe * FRe) + (FIm * FIm);
+		}
 #undef FRe
 #undef FIm
 
-	const size_t height = _result.spectrum[0].size ();
-	const samplecnt_t x0 = _pos / _fpp;
-	samplecnt_t x1 = (_pos + n_samples) / _fpp;
-	if (x0 == x1) x1 = x0 + 1;
+		const size_t height = _result.spectrum[0].size ();
+		const samplecnt_t x0 = _pos / _fpp;
+		samplecnt_t x1 = (_pos + n_samples) / _fpp;
+		if (x0 == x1) x1 = x0 + 1;
 
-	for (uint32_t i = 0; i < _fft_data_size - 1; ++i) {
-		const float level = fft_power_at_bin (i, i);
-		if (level < -fft_range_db) continue;
-		const float pk = level > 0.0 ? 1.0 : (fft_range_db + level) / fft_range_db;
+		for (uint32_t i = 0; i < _fft_data_size - 1; ++i) {
+			const float level = fft_power_at_bin (i, i);
+			if (level < -fft_range_db) continue;
+			const float pk = level > 0.0 ? 1.0 : (fft_range_db + level) / fft_range_db;
 #if 0 // linear
-		const uint32_t y0 = floor (i * (float) height / _fft_data_size);
-		uint32_t y1 = ceil ((i + 1.0) * (float) height / _fft_data_size);
+			const uint32_t y0 = floor (i * (float) height / _fft_data_size);
+			uint32_t y1 = ceil ((i + 1.0) * (float) height / _fft_data_size);
 #else // logscale
-		const uint32_t y0 = floor (height * logf (1.f + .1f * i) / logf (1.f + .1f * _fft_data_size));
-		uint32_t y1 = ceilf (height * logf (1.f + .1f * (i + 1.f)) / logf (1.f + .1f * _fft_data_size));
+			const uint32_t y0 = floor (height * logf (1.f + .1f * i) / logf (1.f + .1f * _fft_data_size));
+			uint32_t y1 = ceilf (height * logf (1.f + .1f * (i + 1.f)) / logf (1.f + .1f * _fft_data_size));
 #endif
-		assert (y0 < height);
-		assert (y1 > 0 && y1 <= height);
-		if (y0 == y1) y1 = y0 + 1;
-		for (int x = x0; x < x1; ++x) {
-			for (uint32_t y = y0; y < y1 && y < height; ++y) {
-				uint32_t yy = height - 1 - y;
-				if (_result.spectrum[x][yy] < pk) { _result.spectrum[x][yy] = pk; }
+			assert (y0 < height);
+			assert (y1 > 0 && y1 <= height);
+			if (y0 == y1) y1 = y0 + 1;
+			for (int x = x0; x < x1; ++x) {
+				for (uint32_t y = y0; y < y1 && y < height; ++y) {
+					uint32_t yy = height - 1 - y;
+					if (_result.spectrum[x][yy] < pk) { _result.spectrum[x][yy] = pk; }
+				}
 			}
 		}
 	}

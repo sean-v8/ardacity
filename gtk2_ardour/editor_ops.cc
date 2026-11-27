@@ -5927,6 +5927,126 @@ Editor::normalize_region ()
 }
 
 void
+Editor::normalize_region_to_target (bool loudness)
+{
+	Session* const session = _session;
+	if (!session) {
+		return;
+	}
+
+	/* Keep the regions alive while modal progress updates dispatch GUI events. */
+	vector<std::shared_ptr<AudioRegion> > regions;
+	set<std::shared_ptr<AudioRegion> > seen;
+	double samples = 0;
+	for (RegionView* view : get_regions_from_selection_and_entered ()) {
+		if (AudioRegionView* arv = dynamic_cast<AudioRegionView*> (view)) {
+			std::shared_ptr<AudioRegion> region = arv->audio_region ();
+			if (seen.insert (region).second) {
+				regions.push_back (region);
+				samples += region->length_samples ();
+			}
+		}
+	}
+	if (regions.empty () || samples <= 0) {
+		return;
+	}
+
+	NormalizeTargetDialog dialog (loudness);
+	if (dialog.run () != RESPONSE_ACCEPT || _session != session || !dialog.is_visible ()) {
+		return;
+	}
+
+	double const target = dialog.target ();
+	double const ceiling = dialog.peak_ceiling ();
+	gain_t const peak_target = dB_to_coefficient (loudness ? ceiling : target);
+	dialog.start_analysis ();
+
+	vector<std::pair<std::shared_ptr<AudioRegion>, gain_t> > changes;
+	size_t limited = 0;
+	size_t skipped = 0;
+
+	for (std::shared_ptr<AudioRegion> const& region : regions) {
+		if (dialog.cancelled () || !dialog.is_visible () || _session != session) {
+			return;
+		}
+
+		samplecnt_t const length = region->length_samples ();
+		if (length <= 0) {
+			++skipped;
+			continue;
+		}
+
+		dialog.descend (length / samples);
+		gain_t gain = 0;
+
+		if (loudness) {
+			float true_peak, integrated, short_term, momentary;
+			if (region->loudness (true_peak, integrated, short_term, momentary, &dialog, false)
+			    && std::isfinite (integrated) && integrated > -180.f
+			    && std::isfinite (true_peak) && true_peak > 0.f) {
+				gain_t const requested = dB_to_coefficient (target - integrated);
+				gain_t const allowed = peak_target / true_peak;
+				gain = std::min (requested, allowed);
+				if (allowed < requested) {
+					++limited;
+				}
+			}
+		} else {
+			double const peak = region->maximum_amplitude (&dialog);
+			if (std::isfinite (peak) && peak > 0) {
+				gain = peak_target / peak;
+			}
+		}
+		dialog.ascend ();
+
+		if (!std::isfinite (gain) || gain <= 0.f) {
+			++skipped;
+			continue;
+		}
+
+		/* The analysis reads raw audio. Replace the gain magnitude and retain polarity. */
+		gain = std::copysign (gain, region->scale_amplitude ());
+		if (gain != region->scale_amplitude ()) {
+			changes.emplace_back (region, gain);
+		}
+	}
+
+	dialog.set_progress (1);
+	if (dialog.cancelled () || !dialog.is_visible () || _session != session) {
+		return;
+	}
+
+	/* No GUI event pumping once we begin applying the changes. */
+	if (!changes.empty ()) {
+		begin_reversible_command (loudness ? _("Normalize to Loudness") : _("Normalize to Peak"));
+		for (auto const& change : changes) {
+			change.first->clear_changes ();
+			change.first->set_scale_amplitude (change.second);
+			session->add_command (new StatefulDiffCommand (change.first));
+		}
+		commit_reversible_command ();
+	}
+
+	dialog.save_settings (target, ceiling);
+	dialog.hide ();
+
+	if (limited || skipped) {
+		std::string message;
+		if (limited) {
+			message = string_compose (_("Regions that could not reach the loudness target because of the true-peak ceiling: %1"), limited);
+		}
+		if (skipped) {
+			if (!message.empty ()) {
+				message += "\n";
+			}
+			message += string_compose (_("Regions left unchanged because the required audio measurements were unavailable: %1"), skipped);
+		}
+		ArdourMessageDialog result (message);
+		result.run ();
+	}
+}
+
+void
 Editor::adjust_region_gain (bool up)
 {
 	RegionSelection rs = get_regions_from_selection_and_entered ();

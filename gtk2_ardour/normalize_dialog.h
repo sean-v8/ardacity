@@ -26,6 +26,7 @@ namespace Gtk {
 	class SpinButton;
 	class ProgressBar;
 	class ComboBoxText;
+	class Table;
 }
 
 class NormalizeDialog : public ArdourDialog, public ProgressReporter
@@ -70,4 +71,28 @@ private:
 	static bool _last_normalize_true_peak;
 	static bool _last_constrain_rms;
 	static bool _last_constrain_lufs;
+};
+
+class NormalizeTargetDialog : public ArdourDialog, public ProgressReporter
+{
+public:
+	explicit NormalizeTargetDialog (bool loudness);
+
+	double target ();
+	double peak_ceiling ();
+	void start_analysis ();
+	void save_settings (double target, double ceiling);
+
+private:
+	void on_response (int) override;
+	bool on_delete_event (GdkEventAny*) override;
+	void on_hide () override;
+	void update_progress_gui (float) override;
+
+	bool const _loudness;
+	Gtk::SpinButton* _target;
+	Gtk::SpinButton* _ceiling;
+	Gtk::Table* _settings;
+	Gtk::ProgressBar* _progress;
+	int64_t _analysis_started;
 };

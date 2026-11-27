@@ -1177,6 +1177,7 @@ private:
 	void reverse_region ();
 	void strip_region_silence ();
 	void normalize_region ();
+	void normalize_region_to_target (bool loudness);
 	void adjust_region_gain (bool up);
 	void reset_region_gain ();
 	void deinterlace_midi_regions (const RegionSelection& rs);

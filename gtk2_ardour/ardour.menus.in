@@ -425,6 +425,8 @@
         <menuitem action='toggle-opaque-region'/>
         <menuitem action='toggle-region-mute'/>
         <menuitem action='normalize-region'/>
+        <menuitem action='normalize-region-peak'/>
+        <menuitem action='normalize-region-loudness'/>
         <menuitem action='boost-region-gain'/>
         <menuitem action='cut-region-gain'/>
         <menuitem action='reset-region-gain'/>
@@ -1000,6 +1002,8 @@
       <menuitem action='toggle-opaque-region'/>
       <menuitem action='toggle-region-mute'/>
       <menuitem action='normalize-region'/>
+      <menuitem action='normalize-region-peak'/>
+      <menuitem action='normalize-region-loudness'/>
       <menuitem action='boost-region-gain'/>
       <menuitem action='cut-region-gain'/>
       <menuitem action='reset-region-gain'/>

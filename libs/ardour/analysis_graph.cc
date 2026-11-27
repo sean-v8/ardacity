@@ -62,7 +62,7 @@ AnalysisGraph::analyze_region (std::shared_ptr<AudioRegion> region, bool raw)
 }
 
 void
-AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progress* p)
+AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progress* p, bool spectrum)
 {
 	int n_channels = region->n_channels();
 	if (n_channels == 0 || n_channels > _max_chunksize) {
@@ -77,7 +77,7 @@ AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progres
 				_session->nominal_sample_rate(),
 				n_channels,
 				n_samples,
-				region->length_samples()));
+				region->length_samples(), 800, spectrum ? 200 : 0));
 	interleaver->add_output(chunker);
 	chunker->add_output (analyser);
 
@@ -91,12 +91,15 @@ AnalysisGraph::analyze_region (AudioRegion const* region, bool raw, PBD::Progres
 
 			if (raw) {
 				n = region->read_raw_internal (_buf, region->start_sample() + x, chunk, channel);
+				if (n != chunk) {
+					return;
+				}
 			} else {
 				n = region->read_at (_buf, _mixbuf, _gainbuf, region->position_sample() + x, chunk, channel);
 			}
 
 			ConstProcessContext<Sample> context (_buf, n, 1);
-			if (n < _max_chunksize) {
+			if (raw ? x + n == length : n < _max_chunksize) {
 				context().set_flag (ProcessContext<Sample>::EndOfInput);
 			}
 			interleaver->input (channel)->process (context);
