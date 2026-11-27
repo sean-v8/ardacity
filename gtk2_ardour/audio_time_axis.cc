@@ -159,10 +159,10 @@ AudioTimeAxisView::zoom_waveform_to_peak (double amplitude, double low, double h
 	_pre_peak_high = _waveform_high;
 	_waveform_peak_framed = true;
 	_waveform_peak = std::max (-8.0, std::min (8.0, display_value (amplitude)));
-	const double below = _waveform_peak < 0.0 ? 0.05 : 0.95;
-	const double span = std::max ((_waveform_peak - display_value (low)) / below,
-	                              (display_value (high) - _waveform_peak) / (1.0 - below)) / 0.95;
-	step_waveform_peak_zoom (span / (_waveform_high - _waveform_low));
+	const double display_low = display_value (low);
+	const double display_high = display_value (high);
+	const double padding = (display_high - display_low) / 18.0;
+	set_waveform_range (display_low - padding, display_high + padding);
 }
 
 void
@@ -181,7 +181,8 @@ AudioTimeAxisView::step_waveform_peak_zoom (double factor)
 		return;
 	}
 	const double span = std::max (0.0004, std::min (16.0, (_waveform_high - _waveform_low) * factor));
-	const double below = _waveform_peak < 0.0 ? 0.05 : 0.95;
+	const double fraction = (_waveform_peak - _waveform_low) / (_waveform_high - _waveform_low);
+	const double below = std::max (0.0, std::min (1.0, fraction));
 	const double low = std::max (-8.0, std::min (8.0 - span, _waveform_peak - below * span));
 	set_waveform_range (low, low + span);
 }
