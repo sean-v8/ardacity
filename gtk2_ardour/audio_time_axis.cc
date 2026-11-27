@@ -139,8 +139,8 @@ AudioTimeAxisView::set_waveform_range (double low, double high)
 void
 AudioTimeAxisView::zoom_waveform_at (double center, double factor)
 {
-	set_waveform_range (center + (_waveform_low - center) * factor,
-	                    center + (_waveform_high - center) * factor);
+	const double half_span = (_waveform_high - _waveform_low) * factor * 0.5;
+	set_waveform_range (center - half_span, center + half_span);
 }
 
 bool
