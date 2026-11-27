@@ -9864,7 +9864,9 @@ Editor::toggle_sample_zoom ()
 	_pre_sample_zoom = samples_per_pixel;
 	_pre_sample_zoom_origin = _leftmost_sample;
 	const samplepos_t sample = _playhead_cursor->current_sample ();
-	reposition_and_zoom (std::max<samplepos_t> (0, sample - 16), 32.0 / _visible_canvas_width);
+	const double zoom = std::max (minimum_samples_per_pixel, 32.0 / _visible_canvas_width);
+	const samplecnt_t half_page = std::llround (_visible_canvas_width * zoom * 0.5);
+	reposition_and_zoom (std::max<samplepos_t> (0, sample - half_page), zoom);
 }
 
 void
