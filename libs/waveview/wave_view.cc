@@ -501,7 +501,7 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 	const auto& props = req->image->props;
 	const bool custom_range = props.has_waveform_range ();
 	const Shape shape = custom_range ? WaveView::Normal : props.shape;
-	const bool logscaled = !custom_range && props.logscaled;
+	const bool logscaled = props.logscaled;
 	const bool envelope_active = req->image->props.envelope_active;
 
 	if (shape == WaveView::Rectified) {
@@ -578,7 +578,12 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 					p.min = 0.0;
 				}
 
-				compute_tips (p, tips[i], y_span);
+				if (custom_range) {
+					tips[i].top = props.waveform_y (p.max, y_span * 0.5);
+					tips[i].bot = props.waveform_y (p.min, y_span * 0.5);
+				} else {
+					compute_tips (p, tips[i], y_span);
+				}
 				tips[i].spread = tips[i].bot - tips[i].top;
 			}
 
@@ -693,7 +698,7 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 	} else {
 		const double center = floor ((height - 1) * .5);
 		const double height_zero = props.waveform_y (0, center);
-		if (custom_range) {
+		if (custom_range && !logscaled) {
 			for (int i = 0; i < n_peaks; ++i) {
 				const double gain = envelope_active ? envelope[i] : 1.0;
 				tips[i].top = props.waveform_y (peaks[i].max * gain, center);
@@ -989,7 +994,7 @@ WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 			const double region_sample = samples[i] * props.amplitude;
 			const bool clipped = _global_show_waveform_clipping && std::abs (region_sample) >= _global_clip_level;
 			double value = samples[i] * display_gain * (envelope.empty () ? 1.0 : envelope[i]);
-			if (!props.has_waveform_range () && props.logscaled) {
+			if (props.logscaled) {
 				value = std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (value))), value);
 			}
 			if (rectified) {
