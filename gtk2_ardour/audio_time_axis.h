@@ -75,6 +75,7 @@ public:
 	AudioStreamView* audio_view();
 
 	void set_show_waveforms_recording (bool yn);
+	void zoom_waveform_to_peak (double amplitude);
 
 	void create_automation_child (const Evoral::Parameter& param, bool show);
 

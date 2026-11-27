@@ -9850,6 +9850,83 @@ Editor::effective_zoom_focus() const
 }
 
 void
+Editor::zoom_waveform_to_selection_peak ()
+{
+	if (!_session || !selection) {
+		return;
+	}
+
+	std::map<AudioTimeAxisView*, double> peaks;
+	std::vector<Sample> buffer (64 * 1024);
+	auto scan = [&] (AudioTimeAxisView& view, AudioRegion const& region,
+	                 samplepos_t start, samplepos_t end) {
+		const samplepos_t position = region.position ().samples ();
+		samplepos_t offset = std::max (start, position) - position;
+		const samplepos_t limit = std::min (end - position, region.length_samples ());
+		if (offset >= limit) {
+			return true;
+		}
+
+		double& peak = peaks[&view];
+		const double gain = region.scale_amplitude () * view.audio_view ()->get_amplitude_above_axis ();
+		while (offset < limit) {
+			const samplecnt_t count = std::min<samplecnt_t> (limit - offset, buffer.size ());
+			for (uint32_t channel = 0; channel < region.n_channels (); ++channel) {
+				if (region.read (buffer.data (), offset, count, channel) != count) {
+					return false;
+				}
+				for (samplecnt_t i = 0; i < count; ++i) {
+					const double value = buffer[i] * gain;
+					if (std::abs (value) > std::abs (peak)) {
+						peak = value;
+					}
+				}
+			}
+			offset += count;
+		}
+		return true;
+	};
+
+	if (!selection->time.empty ()) {
+		const timepos_t start = selection->time.start_time ();
+		const timepos_t end = selection->time.end_time ();
+		if (start.samples () >= end.samples ()) {
+			return;
+		}
+		for (auto* track : selection->tracks) {
+			auto* view = dynamic_cast<AudioTimeAxisView*> (track);
+			if (!view || !view->playlist ()) {
+				continue;
+			}
+			auto regions = view->playlist ()->regions_touched (start, end);
+			for (auto const& region : *regions) {
+				auto audio_region = std::dynamic_pointer_cast<AudioRegion> (region);
+				if (audio_region && !scan (*view, *audio_region, start.samples (), end.samples ())) {
+					return;
+				}
+			}
+		}
+	} else {
+		for (auto* region_view : selection->regions) {
+			auto* audio_view = dynamic_cast<AudioRegionView*> (region_view);
+			auto* view = dynamic_cast<AudioTimeAxisView*> (&region_view->get_time_axis_view ());
+			if (!audio_view || !view) {
+				continue;
+			}
+			auto region = audio_view->audio_region ();
+			const samplepos_t start = region->position ().samples ();
+			if (!scan (*view, *region, start, start + region->length_samples ())) {
+				return;
+			}
+		}
+	}
+
+	for (auto const& entry : peaks) {
+		entry.first->zoom_waveform_to_peak (entry.second);
+	}
+}
+
+void
 Editor::temporal_zoom_selection (Editing::ZoomAxis axes)
 {
 	if (!selection) return;

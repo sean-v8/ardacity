@@ -47,6 +47,7 @@
 #include "widgets/ardour_button.h"
 
 #include "ardour/event_type_map.h"
+#include "ardour/logmeter.h"
 #include "ardour/pannable.h"
 #include "ardour/panner.h"
 #include "ardour/panner_shell.h"
@@ -142,6 +143,17 @@ AudioTimeAxisView::set_waveform_range (double low, double high)
 	_waveform_high = high;
 	audio_view ()->set_waveform_range (low, high);
 	_waveform_ruler.queue_draw ();
+}
+
+void
+AudioTimeAxisView::zoom_waveform_to_peak (double amplitude)
+{
+	if (amplitude != 0.0 && UIConfiguration::instance().get_waveform_scale () == ARDOUR::Logarithmic) {
+		amplitude = std::copysign (alt_log_meter (fast_coefficient_to_dB (std::abs (amplitude))), amplitude);
+	}
+	const double center = std::max (-8.0, std::min (8.0, amplitude));
+	/* A zero-width request expands to the ruler's minimum span. */
+	set_waveform_range (center, center);
 }
 
 void

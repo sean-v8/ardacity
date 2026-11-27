@@ -496,6 +496,7 @@ public:
 	void set_zoom_focus (Editing::ZoomFocus);
 
 	void temporal_zoom_selection (Editing::ZoomAxis);
+	void zoom_waveform_to_selection_peak ();
 	void temporal_zoom_session ();
 	void temporal_zoom_extents ();
 
