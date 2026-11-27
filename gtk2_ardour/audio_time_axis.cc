@@ -100,13 +100,17 @@ AudioTimeAxisView::draw_waveform_ruler (GdkEventExpose*)
 	context->set_line_width (1.0);
 	auto layout = _waveform_ruler.create_pango_layout ("");
 	const int intervals = height >= 84 ? 4 : (height >= 48 ? 2 : 1);
+	const double tick_step = (_waveform_high - _waveform_low) / intervals;
+	const int decimals = std::max (1, int (std::ceil (-std::log10 (tick_step))));
+	const double zero_threshold = 0.5 * std::pow (10.0, -decimals);
 	for (unsigned channel = 0; channel < channels; ++channel) {
 		for (int i = 0; i <= intervals; ++i) {
 			const double fraction = double (i) / intervals;
 			const double y = height * (channel + fraction);
 			const double amplitude = _waveform_high - fraction * (_waveform_high - _waveform_low);
 			char text[24];
-			snprintf (text, sizeof (text), "%+.3g", amplitude);
+			const double label_value = std::abs (amplitude) < zero_threshold ? 0.0 : amplitude;
+			snprintf (text, sizeof (text), "%.*f", decimals, label_value);
 			layout->set_text (text);
 			int tw, th;
 			layout->get_pixel_size (tw, th);
